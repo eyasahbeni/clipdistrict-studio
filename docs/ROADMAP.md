@@ -1,23 +1,29 @@
-# Roadmap
+# ClipDistrict Studio roadmap
 
-## v1.0 — Local browser studio (implemented)
-- YouTube official API public metadata search and official embedded video preview
-- Local video import (up to 2 GB), range-enabled playback, internal file IDs
-- SRT import, simple GTA-related highlight suggestions, optional local faster-whisper transcription
-- 9:16 MP4 exports with FFmpeg; two subtitle styles
-- Async background jobs and results/download view
-- Optional OAuth private upload, manual confirmation
-- Simple Windows batch starter, no UI dependencies, basic security and tests
+## v1.0 — local studio (this release)
+- [x] Web app (local, `start.bat`) with live 9:16 preview
+- [x] Link import with yt-dlp (YouTube, Twitch, Kick…), optional section only
+- [x] File import + optional SRT
+- [x] Local Whisper transcription with word timings
+- [x] Moment scoring: hype words, loud reactions, talking speed — each with reasons
+- [x] 7 animated caption themes, 3 layouts, hook title, credit, progress bar, loudness boost
+- [x] Batch render, title ideas, auto description with credit
+- [x] YouTube upload (private / unlisted / public) with saved sign-in
+- [x] CI installs FFmpeg and runs the full test suite
 
-## Pending before calling this a production application
-- Live end-to-end Google OAuth search/upload verification with real credentials
-- Strong OS-level process sandboxing for untrusted videos and model loaders
-- Advanced tracking-based reframing and AI highlight ranking
-- Editable caption timeline, trim handles, drag and drop multiple clips
-- Signed Windows desktop installer and reproducible pinned dependency builds
-- User review and accessibility testing on real Windows PCs
+## v1.1
+- [x] Your own keywords with points + search inside a stream
+- [x] 16 caption themes (box, glow, karaoke, reveal, one-word, tilt)
+- [x] Autopilot, watchlist of creators, several channels
+- [x] Cleanup: delete sources after autopilot / after N days, temp files
+- [x] Clips start on the first word (no dead air)
+
+## Next
+- [ ] Auto face tracking for the facecam layout
+- [ ] Optional AI (Claude / OpenAI key) for better titles and moment picking
+- [ ] Scheduled uploads
+- [ ] Packaged Windows installer (.exe)
 
 ## Non-goals
-- Harvesting Google session cookies
-- Circumventing YouTube protections or downloading third-party streams without required permissions and approvals
-- Blind automatic public publishing or mass reuploads of minimally altered third-party videos
+- Google/YouTube session cookie harvesting
+- Clipping creators who haven't allowed it

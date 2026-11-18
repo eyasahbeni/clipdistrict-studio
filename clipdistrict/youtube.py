@@ -46,7 +46,7 @@ def _get(endpoint: str, params: dict) -> dict:
     key = os.environ.get("YOUTUBE_API_KEY", "").strip()
     if not key:
         raise YouTubeError("Set YOUTUBE_API_KEY for read-only YouTube search/metadata")
-    if endpoint not in {"search", "videos"}:
+    if endpoint not in {"search", "videos", "channels", "playlistItems"}:
         raise ValueError("Unsupported API endpoint")
     args = urlencode({**params, "key": key})
     request = Request(
@@ -106,3 +106,66 @@ def inspect(url: str) -> dict:
         "live_details": item.get("liveStreamingDetails", {}),
         "note": "Metadata and preview only. No video is downloaded.",
     }
+
+
+CHANNEL_ID_RE = re.compile(r"^UC[A-Za-z0-9_-]{22}$")
+
+
+def resolve_channel(text: str) -> dict:
+    """Accept @handle, a channel URL or a UC... id. Returns id, title, uploads playlist."""
+    value = text.strip()
+    if value.startswith("http"):
+        path = urlparse(value).path.strip("/")
+        if path.startswith("channel/"):
+            value = path.split("/")[1]
+        elif path.startswith("@"):
+            value = path.split("/")[0]
+        else:
+            raise ValueError("Use a channel link like youtube.com/@name")
+    params = {"part": "snippet,contentDetails"}
+    if CHANNEL_ID_RE.fullmatch(value):
+        params["id"] = value
+    else:
+        handle = value if value.startswith("@") else "@" + value
+        if not re.fullmatch(r"@[A-Za-z0-9._-]{2,100}", handle):
+            raise ValueError("Invalid channel handle")
+        params["forHandle"] = handle
+    items = _get("channels", params).get("items", [])
+    if not items:
+        raise YouTubeError(f"Channel not found: {text}")
+    item = items[0]
+    return {"id": item["id"], "title": item["snippet"]["title"],
+            "uploads": item["contentDetails"]["relatedPlaylists"]["uploads"],
+            "thumb": item["snippet"].get("thumbnails", {}).get("default", {}).get("url", "")}
+
+
+def recent_uploads(uploads_playlist: str, limit: int = 10) -> list[dict]:
+    """Newest videos of a channel (1 quota unit, much cheaper than search)."""
+    payload = _get("playlistItems", {"part": "snippet,contentDetails", "playlistId": uploads_playlist,
+                                     "maxResults": max(1, min(50, limit))})
+    out = []
+    for item in payload.get("items", []):
+        vid = item.get("contentDetails", {}).get("videoId", "")
+        if VIDEO_ID_RE.fullmatch(vid):
+            out.append({"id": vid, "title": item["snippet"].get("title", ""),
+                        "published_at": item["contentDetails"].get("videoPublishedAt", ""),
+                        "url": f"https://www.youtube.com/watch?v={vid}"})
+    return out
+
+
+def durations(video_ids: list[str]) -> dict[str, float]:
+    """Seconds per video id; live/upcoming streams come back as 0."""
+    if not video_ids:
+        return {}
+    payload = _get("videos", {"part": "contentDetails,snippet", "id": ",".join(video_ids[:50])})
+    result = {}
+    for item in payload.get("items", []):
+        live = item.get("snippet", {}).get("liveBroadcastContent", "none")
+        iso = item.get("contentDetails", {}).get("duration", "")
+        m = re.fullmatch(r"P(?:(\d+)D)?T?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", iso or "")
+        secs = 0.0
+        if m and live == "none":
+            d, h, mi, se = (int(x or 0) for x in m.groups())
+            secs = d * 86400 + h * 3600 + mi * 60 + se
+        result[item["id"]] = secs
+    return result

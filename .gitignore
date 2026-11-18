@@ -19,3 +19,5 @@ exports/
 *.srt
 node_modules/
 dist/
+workspace/
+*.ass

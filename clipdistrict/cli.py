@@ -15,6 +15,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=__version__)
     commands = parser.add_subparsers(dest="command", required=True)
 
+    app = commands.add_parser("app", help="Start the ClipDistrict Studio app in your browser")
+    app.add_argument("--port", type=int, default=8765)
+    app.add_argument("--no-browser", action="store_true")
+
     find = commands.add_parser("search", help="Discover GTA 6 YouTube videos using official API")
     find.add_argument("--query", default="GTA 6")
     find.add_argument("--live", action="store_true", help="Only current livestreams")
@@ -48,6 +52,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        if args.command == "app":
+            from .server import serve
+            serve(port=args.port, open_browser=not args.no_browser)
+            return 0
         if args.command == "search":
             result = search(args.query, live=args.live, limit=args.limit)
         elif args.command == "inspect":

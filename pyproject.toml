@@ -1,20 +1,21 @@
 [build-system]
-requires = ["setuptools>=75,<82"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "clipdistrict-studio"
-version = "1.0.0"
-description = "Local-first GTA 6 Shorts clipping starter with official YouTube discovery and private upload"
-requires-python = ">=3.11"
+version = "1.1.0"
+description = "GTA 6 Shorts studio: import a stream, auto-find moments, styled captions, upload to YouTube"
+requires-python = ">=3.10"
 license = "MIT"
 readme = "README.md"
-dependencies = []
-
-[project.optional-dependencies]
-transcription = ["faster-whisper>=1.0,<3"]
-
-youtube-upload = [
+dependencies = [
+  "flask>=3.0,<4",
+  "numpy>=1.26",
+  "imageio-ffmpeg>=0.5",
+  "yt-dlp[default]>=2025.11",
+  "deno>=2.0",
+  "faster-whisper>=1.1",
   "google-api-python-client>=2.140,<3",
   "google-auth-oauthlib>=1.2,<2",
 ]
@@ -26,4 +27,4 @@ clipdistrict = "clipdistrict.cli:main"
 include = ["clipdistrict*"]
 
 [tool.setuptools.package-data]
-clipdistrict = ["static/*.html", "static/*.css", "static/*.js"]
+clipdistrict = ["web/*", "fonts/*"]

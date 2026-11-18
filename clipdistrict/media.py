@@ -1,11 +1,11 @@
 """Restricted local file clipping with FFmpeg (no shell, network off)."""
 from __future__ import annotations
-import json
 import math
 import re
-import shutil
 import subprocess
 from pathlib import Path
+
+from .config import ffmpeg_bin
 
 VIDEO_EXT = {".mp4", ".mov", ".mkv", ".webm"}
 NAME_RE = re.compile(r"^[a-zA-Z0-9_-]{1,75}\.mp4$")
@@ -45,19 +45,37 @@ def check_local_video(src: str | Path) -> Path:
     return source
 
 
-def probe_duration(src: Path) -> float:
-    if not shutil.which("ffprobe"):
-        raise MediaError("ffprobe is not installed or not on PATH")
-    cmd = ["ffprobe", "-v", "error", "-protocol_whitelist", "file",
-           "-show_entries", "format=duration", "-of", "json", str(src)]
+DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
+SIZE_RE = re.compile(r"Video:.*?(\d{2,5})x(\d{2,5})")
+
+
+def probe(src: Path) -> dict:
+    """Return duration/width/height. Uses only ffmpeg (ffprobe is optional)."""
     try:
-        result = subprocess.run(cmd, text=True, capture_output=True, timeout=35, check=True)
-        duration = float(json.loads(result.stdout)["format"]["duration"])
-    except (subprocess.SubprocessError, ValueError, KeyError) as err:
+        ffmpeg = ffmpeg_bin()
+    except RuntimeError as err:
+        raise MediaError(str(err)) from None
+    cmd = [ffmpeg, "-hide_banner", "-nostdin", "-protocol_whitelist", "file", "-i", str(src)]
+    try:
+        result = subprocess.run(cmd, text=True, capture_output=True, timeout=35,
+                                encoding="utf-8", errors="replace")
+    except subprocess.SubprocessError as err:
         raise MediaError(f"Could not inspect video: {type(err).__name__}") from None
+    match = DURATION_RE.search(result.stderr)
+    if not match:
+        raise MediaError("Could not read video duration")
+    h, m, s = match.groups()
+    duration = int(h) * 3600 + int(m) * 60 + float(s)
+    size = SIZE_RE.search(result.stderr)
+    width, height = (int(size.group(1)), int(size.group(2))) if size else (1920, 1080)
     if not math.isfinite(duration) or duration <= 0:
         raise MediaError("Video duration invalid")
-    return duration
+    return {"duration": duration, "width": width, "height": height,
+            "has_audio": "Audio:" in result.stderr}
+
+
+def probe_duration(src: Path) -> float:
+    return probe(src)["duration"]
 
 
 def export_short(src: str | Path, start: float, duration: float, name: str,
@@ -66,8 +84,10 @@ def export_short(src: str | Path, start: float, duration: float, name: str,
         raise MediaError("Clip must be 1–180 seconds, with a non-negative start")
     if not NAME_RE.fullmatch(name):
         raise MediaError("Output name must use letters, numbers, - or _, ending in .mp4")
-    if not shutil.which("ffmpeg"):
-        raise MediaError("ffmpeg is not installed or not on PATH")
+    try:
+        ffmpeg = ffmpeg_bin()
+    except RuntimeError as err:
+        raise MediaError(str(err)) from None
     source = check_local_video(src)
     available = probe_duration(source)
     if start + duration > available + 0.1:
@@ -82,7 +102,7 @@ def export_short(src: str | Path, start: float, duration: float, name: str,
         raise MediaError("Refusing to overwrite an existing file")
     vf = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1"
     cmd = [
-        "ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error", "-n",
+        ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "error", "-n",
         "-ss", f"{start:.3f}", "-t", f"{duration:.3f}",
         "-protocol_whitelist", "file", "-i", str(source),
         "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "24",

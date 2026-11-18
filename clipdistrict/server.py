@@ -1,0 +1,404 @@
+"""Local web app: http://127.0.0.1:8765 (only reachable from your own computer)."""
+from __future__ import annotations
+
+import os
+import threading
+import uuid
+import webbrowser
+from pathlib import Path
+
+from flask import Flask, abort, jsonify, request, send_file, send_from_directory
+
+from . import __version__, captions, importer, jobs, moments, projects, render, transcribe, uploader, workflow
+from .config import (FONTS_DIR, SECRETS_DIR, WEB_DIR, ensure_dirs, ffmpeg_bin, ffmpeg_has_captions, load_settings,
+                     oauth_client_file, save_settings)
+
+app = Flask(__name__, static_folder=None)
+app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 ** 3  # 8 GB uploads
+API_KEY_FILE = SECRETS_DIR / "youtube_api_key.txt"
+
+
+def _api_key() -> str:
+    if API_KEY_FILE.is_file():
+        key = API_KEY_FILE.read_text(encoding="utf-8").strip()
+        if key:
+            os.environ["YOUTUBE_API_KEY"] = key
+    return os.environ.get("YOUTUBE_API_KEY", "").strip()
+
+
+def _err(message: str, code: int = 400):
+    return jsonify({"error": message}), code
+
+
+def _body() -> dict:
+    return request.get_json(silent=True) or {}
+
+
+# ---------------------------------------------------------------- pages ----
+@app.get("/")
+def index():
+    return send_from_directory(WEB_DIR, "index.html")
+
+
+@app.get("/assets/<path:name>")
+def assets(name):
+    return send_from_directory(WEB_DIR, name)
+
+
+@app.get("/fonts/<path:name>")
+def fonts(name):
+    return send_from_directory(FONTS_DIR, name)
+
+
+# --------------------------------------------------------------- status ----
+@app.get("/api/status")
+def status():
+    try:
+        ffmpeg_ok = bool(ffmpeg_bin()) and ffmpeg_has_captions()
+    except RuntimeError:
+        ffmpeg_ok = False
+    try:
+        import faster_whisper  # noqa: F401
+        whisper_ok = True
+    except ImportError:
+        whisper_ok = False
+    channels = uploader.list_channels()
+    return jsonify({
+        "version": __version__, "ffmpeg": ffmpeg_ok, "whisper": whisper_ok,
+        "api_key": bool(_api_key()), "oauth_client": bool(oauth_client_file()),
+        "channel": channels[0] if channels else None, "channels": channels,
+        "settings": load_settings(), "storage": workflow.storage(),
+    })
+
+
+@app.get("/api/themes")
+def themes():
+    return jsonify({"themes": captions.theme_list(), "layouts": render.LAYOUTS,
+                    "positions": captions.POSITIONS})
+
+
+@app.post("/api/settings")
+def settings():
+    data = _body()
+    if "youtube_api_key" in data:
+        ensure_dirs()
+        API_KEY_FILE.write_text(str(data.pop("youtube_api_key")).strip(), encoding="utf-8")
+        os.environ.pop("YOUTUBE_API_KEY", None)
+        _api_key()
+    return jsonify(save_settings(data))
+
+
+@app.post("/api/settings/oauth-client")
+def oauth_client():
+    file = request.files.get("file")
+    if not file:
+        return _err("Choose the client_secret JSON file")
+    try:
+        uploader.save_client_file(file.read())
+    except (ValueError, UnicodeDecodeError) as err:
+        return _err(str(err) or "Invalid file")
+    return jsonify({"ok": True})
+
+
+@app.post("/api/youtube/signin")
+def signin():
+    try:
+        return jsonify({"channel": uploader.sign_in()})
+    except Exception as err:
+        return _err(str(err))
+
+
+@app.post("/api/youtube/remove")
+def remove_channel():
+    try:
+        uploader.remove_channel(_body().get("id", ""))
+    except ValueError as err:
+        return _err(str(err))
+    return jsonify({"ok": True})
+
+
+# ------------------------------------------------------------ automation ----
+@app.get("/api/automation")
+def automation():
+    state = workflow._watch_state()
+    return jsonify({"activity": workflow.activity()[:60], "last_check": state.get("last_check", 0),
+                    "watch_started": state.get("started"), "storage": workflow.storage()})
+
+
+@app.post("/api/watch/channels")
+def watch_add():
+    if not _api_key():
+        return _err("Add your YouTube API key in Settings first")
+    try:
+        return jsonify(workflow.add_watch_channel(_body().get("channel", "")))
+    except Exception as err:
+        return _err(str(err))
+
+
+@app.delete("/api/watch/channels/<cid>")
+def watch_remove(cid):
+    workflow.remove_watch_channel(cid)
+    return jsonify({"ok": True})
+
+
+@app.post("/api/watch/check")
+def watch_check():
+    if not _api_key():
+        return _err("Add your YouTube API key in Settings first")
+    try:
+        return jsonify({"added": workflow.check_watchlist()})
+    except Exception as err:
+        return _err(str(err))
+
+
+@app.post("/api/watch/reset")
+def watch_reset():
+    workflow.reset_watch_start()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/cleanup")
+def cleanup():
+    data = _body()
+    freed = 0
+    if data.get("all_sources"):
+        for meta in projects.list_all():
+            freed += workflow.free_source(meta["id"])
+    else:
+        freed = workflow.sweep_old(float(data.get("older_than_days", load_settings()["keep_days"]) or 0.01))
+    workflow.sweep_temp()
+    return jsonify({"freed": freed, "storage": workflow.storage()})
+
+
+@app.get("/api/search")
+def search():
+    if not _api_key():
+        return _err("Add your YouTube API key in Settings to search")
+    from .youtube import YouTubeError, search as yt_search
+    try:
+        results = yt_search(request.args.get("q", "GTA 6"), live=request.args.get("live") == "1",
+                            limit=int(request.args.get("limit", 12)))
+    except (ValueError, YouTubeError) as err:
+        return _err(str(err))
+    return jsonify({"results": results})
+
+
+@app.post("/api/info")
+def info():
+    try:
+        return jsonify(importer.fetch_info(_body().get("url", "")))
+    except Exception as err:
+        return _err(f"Couldn't read that link: {str(err)[:300]}")
+
+
+@app.get("/api/jobs")
+def list_jobs():
+    return jsonify({"jobs": jobs.all_jobs()})
+
+
+# ------------------------------------------------------------- projects ----
+def _num(value):
+    if value in (None, ""):
+        return None
+    from .media import parse_time
+    return parse_time(str(value))
+
+
+@app.get("/api/projects")
+def list_projects():
+    return jsonify({"projects": projects.list_all()})
+
+
+@app.post("/api/projects")
+def create_project():
+    data = _body()
+    if not data.get("permission"):
+        return _err("Confirm the creator allows clipping before importing")
+    try:
+        url = importer.check_url(data.get("url", ""))
+        start, end = _num(data.get("start")), _num(data.get("end"))
+    except ValueError as err:
+        return _err(str(err))
+    if start is not None and end is not None and end <= start:
+        return _err("'To' must be after 'From'")
+    meta = workflow.start_import(url=url, title=data.get("title") or url, creator=data.get("creator", ""),
+                                 start=start, end=end, autopilot=bool(data.get("autopilot")),
+                                 permission_note=str(data.get("permission_note", "")))
+    return jsonify(meta)
+
+
+@app.post("/api/projects/upload")
+def upload_project():
+    file = request.files.get("file")
+    if not file or not file.filename:
+        return _err("Choose a video file")
+    if Path(file.filename).suffix.lower() not in {".mp4", ".mov", ".mkv", ".webm"}:
+        return _err("Video must be MP4, MOV, MKV or WEBM")
+    meta = projects.create(Path(file.filename).stem, "", request.form.get("creator", ""))
+    pid = meta["id"]
+    raw = projects.project_dir(pid) / ("upload" + Path(file.filename).suffix.lower())
+    file.save(raw)
+    srt = request.files.get("srt")
+    if srt and srt.filename:
+        transcribe.from_srt(srt.read().decode("utf-8-sig", errors="replace"), projects.transcript_path(pid))
+    workflow.start_import(pid=pid, raw_file=raw, autopilot=request.form.get("autopilot") == "1")
+    return jsonify(meta)
+
+
+@app.get("/api/projects/<pid>")
+def get_project(pid):
+    try:
+        return jsonify(projects.load(pid))
+    except (ValueError, OSError):
+        abort(404)
+
+
+@app.delete("/api/projects/<pid>")
+def delete_project(pid):
+    projects.delete(pid)
+    return jsonify({"ok": True})
+
+
+@app.get("/api/projects/<pid>/source")
+def project_source(pid):
+    path = projects.source_path(pid)
+    if not path.is_file():
+        abort(404)
+    return send_file(path, mimetype="video/mp4", conditional=True)
+
+
+@app.get("/api/projects/<pid>/poster.jpg")
+def project_poster(pid):
+    path = projects.project_dir(pid) / "poster.jpg"
+    if not path.is_file():
+        abort(404)
+    return send_file(path, mimetype="image/jpeg")
+
+
+@app.get("/api/projects/<pid>/words")
+def project_words(pid):
+    data = transcribe.load(projects.transcript_path(pid))
+    a, b = float(request.args.get("start", 0)), float(request.args.get("end", 1e9))
+    return jsonify({"words": transcribe.words_between(data, a, b)})
+
+
+@app.post("/api/projects/<pid>/reanalyze")
+def reanalyze(pid):
+    data = _body()
+    save_settings({k: data[k] for k in ("clip_length", "clips_per_video") if k in data})
+    if not projects.source_path(pid).is_file():
+        return _err("The source video was cleaned up, import it again to re-analyze")
+    jobs.submit("analyze", "Finding moments again", lambda p: workflow.analyze(pid, p)["id"], project_id=pid)
+    return jsonify({"ok": True})
+
+
+@app.get("/api/projects/<pid>/search")
+def search_stream(pid):
+    meta = projects.load(pid)
+    hits = moments.search_transcript(transcribe.load(projects.transcript_path(pid)),
+                                     request.args.get("q", ""), meta["duration"])
+    return jsonify({"hits": hits})
+
+
+@app.post("/api/projects/<pid>/free")
+def free_project(pid):
+    freed = workflow.free_source(pid)
+    return jsonify({"freed": freed})
+
+
+@app.post("/api/projects/<pid>/autopilot")
+def project_autopilot(pid):
+    if not projects.source_path(pid).is_file():
+        return _err("The source video was cleaned up")
+    return jsonify({"queued": workflow.start_autopilot(pid)})
+
+
+@app.post("/api/projects/<pid>/moments")
+def add_moment(pid):
+    data = _body()
+    meta = projects.load(pid)
+    try:
+        start, end = _num(data.get("start")), _num(data.get("end"))
+    except ValueError as err:
+        return _err(str(err))
+    if start is None or end is None or not 3 <= end - start <= 180 or end > meta["duration"] + 0.5:
+        return _err("Pick a range between 3 and 180 seconds inside the video")
+    text = " ".join(w["word"] for w in transcribe.words_between(transcribe.load(projects.transcript_path(pid)), start, end))
+    moment = {"id": uuid.uuid4().hex[:8], "start": start, "end": end, "score": 0,
+              "reasons": ["added by you"], "hook": moments.hook_line(text) if text else "",
+              "titles": moments.title_ideas(text), "transcript": text[:600], "manual": True}
+    meta["moments"] = sorted(meta["moments"] + [moment], key=lambda m: m["start"])
+    projects.save(meta)
+    return jsonify(moment)
+
+
+@app.delete("/api/projects/<pid>/moments/<mid>")
+def delete_moment(pid, mid):
+    meta = projects.load(pid)
+    meta["moments"] = [m for m in meta["moments"] if m["id"] != mid]
+    projects.save(meta)
+    return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------- clips ----
+@app.post("/api/projects/<pid>/render")
+def render_clip(pid):
+    data = _body()
+    meta = projects.load(pid)
+    try:
+        start, end = float(data["start"]), float(data["end"])
+    except (KeyError, TypeError, ValueError):
+        return _err("Missing start/end")
+    if not 1 <= end - start <= 180 or start < 0 or end > meta["duration"] + 0.5:
+        return _err("Clip must be 1–180 seconds inside the video")
+    style = dict(data.get("style") or {})
+    if not projects.source_path(pid).is_file():
+        return _err("The source video was cleaned up, import it again to make more Shorts")
+    clip = workflow.queue_render(pid, start, end, style, moment_id=data.get("moment_id", ""),
+                                 title=str(data.get("title") or ""), titles=data.get("titles", []))
+    return jsonify(clip)
+
+
+@app.get("/api/projects/<pid>/clips/<cid>.mp4")
+def clip_file(pid, cid):
+    path = projects.clip_path(pid, cid)
+    if not path.is_file():
+        abort(404)
+    download = request.args.get("download") == "1"
+    return send_file(path, mimetype="video/mp4", conditional=True, as_attachment=download,
+                     download_name=f"clipdistrict-{cid}.mp4")
+
+
+@app.delete("/api/projects/<pid>/clips/<cid>")
+def delete_clip(pid, cid):
+    with projects._lock:
+        meta = projects.load(pid)
+        meta["clips"] = [c for c in meta["clips"] if c["id"] != cid]
+        projects.save(meta)
+    projects.clip_path(pid, cid).unlink(missing_ok=True)
+    return jsonify({"ok": True})
+
+
+@app.post("/api/projects/<pid>/clips/<cid>/upload")
+def upload_clip(pid, cid):
+    data = _body()
+    if not data.get("rights_confirmed"):
+        return _err("Confirm you have permission to post this clip")
+    path = projects.clip_path(pid, cid)
+    if not path.is_file():
+        return _err("Render the clip first")
+    tags = [t for t in str(data.get("tags", "")).replace(",", " ").split() if t]
+    workflow.queue_upload(pid, cid, title=str(data.get("title", "")), description=str(data.get("description", "")),
+                          tags=tags, privacy=data.get("privacy", "private"), channel_id=data.get("channel_id", ""))
+    return jsonify({"ok": True})
+
+
+def serve(host: str = "127.0.0.1", port: int = 8765, open_browser: bool = True) -> None:
+    ensure_dirs()
+    _api_key()
+    workflow.start_background()
+    url = f"http://{host}:{port}"
+    print(f"\n  ClipDistrict Studio is running → {url}\n  Keep this window open. Press Ctrl+C to stop.\n")
+    if open_browser:
+        threading.Timer(1.2, lambda: webbrowser.open(url)).start()
+    app.run(host=host, port=port, threaded=True, debug=False)

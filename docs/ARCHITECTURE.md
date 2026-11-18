@@ -1,31 +1,28 @@
-# Architecture and trust boundaries
+# Architecture
 
 ```text
-YouTube Data API (metadata only) ---> Discovery + URL preview ---> Creator review
-                                                   |
-Authorized local source footage -------------------+--> Local FFmpeg clip/render
-Local SRT subtitles -------------------------------+--> Heuristic highlight suggestions
-                                                            |
-                                                  Human review and rights check
-                                                            |
-                                       Google OAuth youtube.upload ---> Private upload
+Browser UI (web/)  ──HTTP, 127.0.0.1 only──►  Flask server (server.py)
+                                                  │  background jobs (jobs.py, 1 heavy worker)
+   link ──► importer.py (yt-dlp + deno) ─┐        │
+   file ──► upload + optional .srt ──────┼──► workspace/projects/<id>/source.mp4
+                                         │
+                transcribe.py (faster-whisper, word timings) ─► transcript.json
+                moments.py (hype words + loudness + talk speed) ─► project.json moments
+                                         │
+          editor settings ─► captions.py (ASS themes) + render.py (FFmpeg layouts)
+                                         │
+                               clips/<clip>.mp4 ─► uploader.py (Google OAuth) ─► YouTube
 ```
 
-## Trust boundaries
+## Storage
 
-- Treat all YouTube metadata, titles, and subtitle content as untrusted text.
-- The CLI accepts only official YouTube URL hostnames for metadata inspection.
-- Never execute video titles, AI-supplied strings, or subtitles as shell commands.
-- Never send arbitrary YouTube content to a media downloader. Obtain authorized source files separately.
-- FFmpeg uses file-only protocols, command argument arrays, no shell, and no automatic overwrites.
-- Upload requires explicit human confirmation and remains private.
-- Credentials must be stored outside the repository; this prototype does not persist Google OAuth tokens.
+`workspace/` (git-ignored) holds projects, settings and `secrets/` (API key, OAuth client, saved token).
+Set `CLIPDISTRICT_HOME` to move it.
 
-## Production hardening roadmap
+## Safety rules
 
-- Move media processing into a sandbox with CPU, memory, disk and time limits.
-- Add locally installable transcription and caption overlays (not included yet).
-- Add source-permission and original-commentary checklists.
-- Build a UI with secure local file selection instead of free-text system paths.
-- Add mock OAuth and YouTube API tests.
-- Add dependency integrity files, SBOM and automated security CI.
+- The server listens on `127.0.0.1` only.
+- FFmpeg runs with argument arrays, no shell. Captions and fonts are written to a temporary folder.
+- Project and clip ids are validated with strict patterns before touching the disk.
+- Link import refuses local-network URLs and requires the "creator allows clipping" confirmation.
+- Uploads require a permission checkbox and default to private; public needs an extra confirm.

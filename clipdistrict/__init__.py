@@ -1,2 +1,2 @@
-"""ClipDistrict Studio: local-first GTA 6 clipping starter."""
-__version__ = "1.0.0"
+"""ClipDistrict Studio: local GTA 6 Shorts clipping app."""
+__version__ = "1.1.0"
