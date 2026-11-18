@@ -46,6 +46,8 @@ def analyze(pid: str, progress) -> dict:
     warning = ""
     if not tpath.is_file() and meta.get("has_audio", True):
         projects.update(pid, status="transcribing")
+        progress(None, f"Loading subtitle model '{settings['whisper_model']}' "
+                       "(first time it downloads: base ≈150 MB, small ≈480 MB)…")
         try:
             transcribe.transcribe(src, tpath, model=settings["whisper_model"], language=settings["language"],
                                   duration=meta["duration"], on_progress=progress)
