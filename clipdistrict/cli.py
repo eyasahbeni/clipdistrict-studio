@@ -1,5 +1,6 @@
 """Command-line entry point; does not do anything on import."""
 import argparse
+import os
 import json
 import sys
 from . import __version__
@@ -16,7 +17,8 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     app = commands.add_parser("app", help="Start the ClipDistrict Studio app in your browser")
-    app.add_argument("--port", type=int, default=8765)
+    app.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"))
+    app.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8765)))
     app.add_argument("--no-browser", action="store_true")
 
     find = commands.add_parser("search", help="Discover GTA 6 YouTube videos using official API")
@@ -54,7 +56,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "app":
             from .server import serve
-            serve(port=args.port, open_browser=not args.no_browser)
+            serve(host=args.host, port=args.port, open_browser=not args.no_browser)
             return 0
         if args.command == "search":
             result = search(args.query, live=args.live, limit=args.limit)

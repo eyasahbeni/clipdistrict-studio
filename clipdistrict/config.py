@@ -26,6 +26,12 @@ def _load_dotenv() -> None:
 
 _load_dotenv()
 
+# Hosted mode (Hugging Face Spaces, a VPS…): set PUBLIC_URL, or it is detected from SPACE_HOST.
+PUBLIC_URL = (os.environ.get("PUBLIC_URL") or
+              (f"https://{os.environ['SPACE_HOST']}" if os.environ.get("SPACE_HOST") else "")).rstrip("/")
+HOSTED = bool(PUBLIC_URL)
+APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
+
 WORKSPACE = Path(os.environ.get("CLIPDISTRICT_HOME", PACKAGE_DIR.parent / "workspace")).expanduser().resolve()
 PROJECTS_DIR = WORKSPACE / "projects"
 SECRETS_DIR = WORKSPACE / "secrets"
@@ -107,6 +113,13 @@ def ffmpeg_bin() -> str:
 
 
 def oauth_client_file() -> Path | None:
+    inline = os.environ.get("GOOGLE_OAUTH_CLIENT_JSON", "").strip()
+    if inline:
+        ensure_dirs()
+        target = SECRETS_DIR / "client_secret.json"
+        if not target.is_file() or target.read_text(encoding="utf-8") != inline:
+            target.write_text(inline, encoding="utf-8")
+        return target
     configured = os.environ.get("YOUTUBE_OAUTH_CLIENT", "").strip()
     if configured and Path(configured).expanduser().is_file():
         return Path(configured).expanduser()

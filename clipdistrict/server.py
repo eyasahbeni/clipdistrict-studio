@@ -3,18 +3,112 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 import uuid
 import webbrowser
 from pathlib import Path
 
-from flask import Flask, abort, jsonify, request, send_file, send_from_directory
+import hmac
+import secrets
+
+from flask import Flask, abort, jsonify, redirect, request, send_file, send_from_directory, session
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from . import __version__, captions, importer, jobs, moments, projects, render, transcribe, uploader, workflow
-from .config import (FONTS_DIR, SECRETS_DIR, WEB_DIR, ensure_dirs, ffmpeg_bin, ffmpeg_has_captions, load_settings,
+from .config import (APP_PASSWORD, HOSTED, PUBLIC_URL, WORKSPACE, FONTS_DIR, SECRETS_DIR, WEB_DIR, ensure_dirs, ffmpeg_bin, ffmpeg_has_captions, load_settings,
                      oauth_client_file, save_settings)
 
 app = Flask(__name__, static_folder=None)
 app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 ** 3  # 8 GB uploads
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
+
+def _secret_key() -> bytes:
+    env = os.environ.get("SECRET_KEY", "")
+    if env:
+        return env.encode()
+    ensure_dirs()
+    path = WORKSPACE / ".secret_key"
+    if not path.is_file():
+        path.write_bytes(secrets.token_bytes(32))
+    return path.read_bytes()
+
+
+app.secret_key = _secret_key()
+if HOSTED:
+    # Hugging Face shows the app inside an iframe on huggingface.co, so the cookie must allow that.
+    app.config.update(SESSION_COOKIE_SAMESITE="None", SESSION_COOKIE_SECURE=True,
+                      PERMANENT_SESSION_LIFETIME=60 * 60 * 24 * 30)
+
+LOGIN_PAGE = """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>ClipDistrict Studio · Sign in</title>
+<link rel="stylesheet" href="/assets/app.css"></head><body><div class="bg-glow"></div>
+<main class="login"><form method="post" class="card login-card">
+<div class="brand"><span class="brand-mark">CD</span><span class="brand-name">CLIPDISTRICT<em>STUDIO</em></span></div>
+<label>Password<input type="password" name="password" autofocus required></label>
+{error}<button class="btn primary" type="submit">Enter</button></form></main></body></html>"""
+
+OPEN_PATHS = ("/login", "/assets/", "/fonts/", "/oauth/callback")
+
+
+@app.before_request
+def require_login():
+    if not APP_PASSWORD or request.path.startswith(OPEN_PATHS) or session.get("ok"):
+        return None
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "Please sign in again"}), 401
+    return redirect("/login")
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if not APP_PASSWORD:
+        return redirect("/")
+    error = ""
+    if request.method == "POST":
+        if hmac.compare_digest(request.form.get("password", "").encode(), APP_PASSWORD.encode()):
+            session.permanent = True
+            session["ok"] = True
+            return redirect("/")
+        time.sleep(1.5)  # slow down guessing
+        error = '<p class="hint bad">Wrong password</p>'
+    return LOGIN_PAGE.replace("{error}", error)
+
+
+@app.get("/logout")
+def logout():
+    session.clear()
+    return redirect("/login")
+
+
+def _redirect_uri() -> str:
+    return (PUBLIC_URL or request.host_url.rstrip("/")) + "/oauth/callback"
+
+
+@app.get("/oauth/start")
+def oauth_start():
+    try:
+        url, state, verifier = uploader.web_sign_in_url(_redirect_uri())
+    except Exception as err:
+        return f"<p>Couldn't start Google sign-in: {err}</p><p><a href='/'>Back</a></p>", 400
+    session["oauth_state"], session["oauth_verifier"] = state, verifier
+    return redirect(url)
+
+
+@app.get("/oauth/callback")
+def oauth_callback():
+    if APP_PASSWORD and not session.get("ok"):
+        return redirect("/login")
+    if request.args.get("error"):
+        return redirect("/#/?google=" + request.args["error"])
+    if request.args.get("state") != session.get("oauth_state"):
+        return "<p>Sign-in expired, please try again.</p><p><a href='/'>Back</a></p>", 400
+    try:
+        uploader.web_sign_in_finish(_redirect_uri(), session.pop("oauth_state"),
+                                    session.pop("oauth_verifier", ""), request.args.get("code", ""))
+    except Exception as err:
+        return f"<p>Google sign-in failed: {err}</p><p><a href='/'>Back</a></p>", 400
+    return redirect("/#/auto")
 API_KEY_FILE = SECRETS_DIR / "youtube_api_key.txt"
 
 
@@ -68,6 +162,8 @@ def status():
         "api_key": bool(_api_key()), "oauth_client": bool(oauth_client_file()),
         "channel": channels[0] if channels else None, "channels": channels,
         "settings": load_settings(), "storage": workflow.storage(),
+        "hosted": HOSTED, "public_url": PUBLIC_URL, "redirect_uri": _redirect_uri() if HOSTED else "",
+        "login": bool(APP_PASSWORD),
     })
 
 
@@ -396,8 +492,10 @@ def upload_clip(pid, cid):
 def serve(host: str = "127.0.0.1", port: int = 8765, open_browser: bool = True) -> None:
     ensure_dirs()
     _api_key()
+    if host not in ("127.0.0.1", "localhost") and not APP_PASSWORD:
+        print("\n  WARNING: the app is reachable from the network but APP_PASSWORD is not set.\n")
     workflow.start_background()
-    url = f"http://{host}:{port}"
+    url = PUBLIC_URL or f"http://{host}:{port}"
     print(f"\n  ClipDistrict Studio is running → {url}\n  Keep this window open. Press Ctrl+C to stop.\n")
     if open_browser:
         threading.Timer(1.2, lambda: webbrowser.open(url)).start()

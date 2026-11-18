@@ -301,3 +301,7 @@ label input, label select, label textarea { font-weight: 500; text-transform: no
 .act .t { color: var(--muted); min-width: 110px; font-size: 12px; }
 .act.error { border-left: 3px solid var(--red); } .act.ok { border-left: 3px solid var(--green); } .act.warn { border-left: 3px solid var(--orange); }
 @media (max-width: 1100px) { .auto-grid { grid-template-columns: 1fr; } }
+
+.login { min-height: 100vh; display: grid; place-items: center; padding: 20px; }
+.login-card { width: min(380px, 100%); padding: 28px; display: grid; gap: 18px; }
+.login-card .brand { justify-content: center; }

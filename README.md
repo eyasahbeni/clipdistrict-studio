@@ -64,6 +64,18 @@ Open **Settings** (⚙ top right) in the app.
 2. *Credentials → Create credentials → OAuth client ID* → type **Desktop app** → download the JSON.
 3. In Settings, choose that JSON, then click **Sign in with Google** and pick the ClipDistrict channel.
 
+## Host it online (Hugging Face Spaces)
+
+1. On huggingface.co → **New Space** → SDK **Docker** → Blank → choose **Private**.
+2. Upload the files from `clipdistrict-hf-space.zip` (or this repo with `deploy/huggingface/README.md` as the root `README.md`).
+3. In the Space **Settings → Variables and secrets** add: `APP_PASSWORD`, `SECRET_KEY`, `YOUTUBE_API_KEY`, `GOOGLE_OAUTH_CLIENT_JSON`.
+4. For uploading, create a Google OAuth client of type **Web application** with redirect URI `https://<your-space>.hf.space/oauth/callback`.
+5. Open `https://<your-space>.hf.space` directly (not inside the huggingface.co page) and log in.
+
+Free Spaces lose files when they restart and go to sleep when unused, so Autopilot only runs while the Space is awake. Add persistent storage or move to a VPS for 24/7. YouTube may block downloads from server IPs.
+
+Any VPS works the same: `docker build -t clipdistrict . && docker run -p 7860:7860 -e APP_PASSWORD=… -e PUBLIC_URL=https://your-domain clipdistrict`.
+
 ## Tips
 
 - **Long streams:** import only the part you want (e.g. from `1:20:00` to `1:45:00`). Downloading and transcribing a 4-hour stream takes a long time.

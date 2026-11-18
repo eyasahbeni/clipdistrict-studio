@@ -1,0 +1,9 @@
+.git
+.venv
+workspace
+**/__pycache__
+*.mp4
+*.mkv
+*.webm
+.env
+docs/*.png

@@ -69,14 +69,41 @@ def _load(channel_id: str):
 
 
 def sign_in() -> dict:
-    """Open Google sign-in in the browser and add the chosen channel."""
-    _, _, InstalledAppFlow, build, _ = _libs()
+    """Desktop: open Google sign-in in the browser and add the chosen channel."""
+    _, _, InstalledAppFlow, _, _ = _libs()
     client_file = oauth_client_file()
     if not client_file:
         raise RuntimeError("Add your Google OAuth client file in Settings first")
     flow = InstalledAppFlow.from_client_secrets_file(str(client_file), scopes=SCOPES)
     creds = flow.run_local_server(host="localhost", port=0, open_browser=True,
                                   access_type="offline", prompt="consent select_account")
+    return _register(creds)
+
+
+def web_sign_in_url(redirect_uri: str) -> tuple[str, str, str]:
+    """Hosted: returns (google_url, state, code_verifier). Needs a 'Web application' OAuth client."""
+    from google_auth_oauthlib.flow import Flow
+    client_file = oauth_client_file()
+    if not client_file:
+        raise RuntimeError("Add your Google OAuth client (GOOGLE_OAUTH_CLIENT_JSON secret) first")
+    flow = Flow.from_client_secrets_file(str(client_file), scopes=SCOPES, redirect_uri=redirect_uri,
+                                         autogenerate_code_verifier=True)
+    url, state = flow.authorization_url(access_type="offline", prompt="consent select_account",
+                                        include_granted_scopes="true")
+    return url, state, flow.code_verifier or ""
+
+
+def web_sign_in_finish(redirect_uri: str, state: str, code_verifier: str, code: str) -> dict:
+    from google_auth_oauthlib.flow import Flow
+    flow = Flow.from_client_secrets_file(str(oauth_client_file()), scopes=SCOPES, state=state,
+                                         redirect_uri=redirect_uri)
+    flow.code_verifier = code_verifier or None
+    flow.fetch_token(code=code)
+    return _register(flow.credentials)
+
+
+def _register(creds) -> dict:
+    _, _, _, build, _ = _libs()
     service = build("youtube", "v3", credentials=creds, cache_discovery=False)
     items = service.channels().list(part="snippet", mine=True).execute().get("items", [])
     if not items:

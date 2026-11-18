@@ -24,6 +24,7 @@ async function api(path, opts = {}) {
   const res = await fetch(path, init);
   let data = {};
   try { data = await res.json(); } catch { /* empty */ }
+  if (res.status === 401) { location.href = "/login"; throw new Error("Please sign in"); }
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
   return data;
 }
@@ -956,6 +957,7 @@ function initSettings() {
     catch (err) { toast(err.message, true); }
   };
   $("#signInBtn").onclick = async () => {
+    if (state.status.hosted) { window.top.location.href = state.status.public_url + "/oauth/start"; return; }
     $("#oauthState").textContent = "A Google sign-in tab is opening… finish it there.";
     try { const r = await api("/api/youtube/signin", { method: "POST" }); await refreshStatus(); toast(`Connected ${r.channel.title}`); }
     catch (err) { $("#oauthState").textContent = err.message; $("#oauthState").className = "hint bad"; }
@@ -994,6 +996,10 @@ function fillSettings() {
   $("#setWhisper").value = s.whisper_model; $("#setLang").value = s.language;
   $("#setLength").value = s.clip_length; $("#setCount").value = s.clips_per_video;
   $("#setTag").value = s.channel_tag; $("#setTags").value = s.default_hashtags;
+  $("#oauthHosted").innerHTML = st.hosted ? `Online mode: create the OAuth client as <b>Web application</b> and add this
+    redirect URI in Google Cloud: <code>${esc(st.redirect_uri)}</code>. Paste the client JSON in the Space secret
+    <b>GOOGLE_OAUTH_CLIENT_JSON</b>.` : "";
+  $("#logoutLink").style.display = st.login ? "" : "none";
   $("#sysState").innerHTML = `FFmpeg + captions: ${st.ffmpeg ? "✓" : "✗ missing — run start.bat again"} · Auto-subtitles: ${st.whisper ? "✓" : "✗ missing"} · v${esc(st.version)}`;
 }
 
