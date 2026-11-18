@@ -907,6 +907,7 @@ async function pollJobs() {
   state.jobs = jobs;
   const dock = $("#jobsDock");
   const visible = jobs.filter((j) => j.state === "running" || j.state === "queued" || (j.state === "error" && Date.now() / 1000 - j.updated < 30));
+  // jobs of a deleted project disappear right away
   dock.innerHTML = visible.slice(0, 4).map((j) => `
     <div class="job ${j.state}"><b>${esc(j.label)}</b>
       <div class="msg">${esc(j.state === "error" ? j.error : j.message)}</div>

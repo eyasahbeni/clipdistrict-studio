@@ -51,6 +51,8 @@ def analyze(pid: str, progress) -> dict:
         try:
             transcribe.transcribe(src, tpath, model=settings["whisper_model"], language=settings["language"],
                                   duration=meta["duration"], on_progress=progress)
+        except jobs.JobCancelled:
+            raise
         except Exception as err:
             warning = f"Auto-subtitles failed ({str(err)[:160]}). Clips were picked from audio only."
     projects.update(pid, status="analyzing")
@@ -80,7 +82,11 @@ def import_job(pid: str, *, url: str = "", start=None, end=None, raw_file: Path 
                 pass
             meta = analyze(pid, progress)
             log(f"Found {len(meta['moments'])} moments in “{meta['title'][:60]}”", project_id=pid)
+        except jobs.JobCancelled:
+            raise
         except Exception as err:
+            if not projects.project_dir(pid).is_dir():
+                raise jobs.JobCancelled() from None   # project was deleted
             projects.update(pid, status="error", error=str(err)[:500])
             log(f"Import failed: {str(err)[:200]}", "error", pid)
             raise

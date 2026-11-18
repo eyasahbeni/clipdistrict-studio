@@ -351,6 +351,7 @@ def get_project(pid):
 
 @app.delete("/api/projects/<pid>")
 def delete_project(pid):
+    jobs.cancel_project(pid)
     projects.delete(pid)
     return jsonify({"ok": True})
 

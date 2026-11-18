@@ -27,14 +27,22 @@ def submit(kind: str, label: str, fn, *, project_id: str = "", clip_id: str = ""
                          "error": "", "result": None, "created": time.time(), "updated": time.time()}
 
     def progress(value, message=""):
+        if is_cancelled(job_id):
+            raise JobCancelled()
         _set(job_id, progress=None if value is None else round(float(value), 3), message=message)
 
     def run():
+        with _lock:
+            if _jobs.get(job_id, {}).get("state") == "cancelled":
+                return
         _set(job_id, state="running", message="Starting…")
         try:
             result = fn(progress)
-            _set(job_id, state="done", progress=1.0, message="Done", result=result)
+            if not is_cancelled(job_id):
+                _set(job_id, state="done", progress=1.0, message="Done", result=result)
         except Exception as err:  # report every failure to the UI
+            if is_cancelled(job_id):
+                return
             traceback.print_exc()
             _set(job_id, state="error", message="Failed", error=str(err)[:800])
 
@@ -42,10 +50,30 @@ def submit(kind: str, label: str, fn, *, project_id: str = "", clip_id: str = ""
     return job_id
 
 
+class JobCancelled(Exception):
+    pass
+
+
+def is_cancelled(job_id: str) -> bool:
+    with _lock:
+        return _jobs.get(job_id, {}).get("state") == "cancelled"
+
+
+def cancel_project(project_id: str) -> int:
+    """Stop waiting jobs of a project and tell running ones to stop at their next progress update."""
+    count = 0
+    with _lock:
+        for job in _jobs.values():
+            if job["project_id"] == project_id and job["state"] in ("queued", "running"):
+                job.update(state="cancelled", message="Cancelled", updated=time.time())
+                count += 1
+    return count
+
+
 def all_jobs() -> list[dict]:
     cutoff = time.time() - 3600
     with _lock:
-        for key in [k for k, j in _jobs.items() if j["state"] in ("done", "error") and j["updated"] < cutoff]:
+        for key in [k for k, j in _jobs.items() if j["state"] in ("done", "error", "cancelled") and j["updated"] < cutoff]:
             _jobs.pop(key)
         return sorted((dict(j) for j in _jobs.values()), key=lambda j: -j["created"])
 

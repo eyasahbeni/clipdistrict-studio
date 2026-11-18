@@ -60,7 +60,10 @@ def download(project_id: str, url: str, start: float | None = None, end: float |
     target = folder / "source.%(ext)s"
 
     def hook(d):
-        if on_progress and d.get("status") == "downloading":
+        if on_progress and d.get("status") in ("downloading", "finished"):
+            if d.get("status") == "finished":
+                on_progress(None, "Download finished, preparing video…")
+                return
             total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
             done = d.get("downloaded_bytes") or 0
             if total:

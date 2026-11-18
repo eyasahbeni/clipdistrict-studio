@@ -82,3 +82,27 @@ class TestWorkflow(unittest.TestCase):
         self.assertEqual(c.post("/api/watch/channels", json={"channel": "@x"}).status_code, 400)  # no API key
         r = c.post("/api/settings", json={"auto_clips": 2, "keywords": "banana:9"}).get_json()
         self.assertEqual(r["auto_clips"], 2)
+
+
+class TestCancel(unittest.TestCase):
+    def test_cancel_queued_and_running(self):
+        import threading
+        import time
+        from clipdistrict import jobs
+        gate = threading.Event()
+        seen = []
+
+        def slow(progress):
+            gate.wait(5)
+            progress(0.5, "half")        # raises once cancelled
+            seen.append("finished")
+
+        first = jobs.submit("t", "slow", slow, project_id="p1")
+        second = jobs.submit("t", "waiting", lambda p: seen.append("second ran"), project_id="p1")
+        time.sleep(0.2)
+        self.assertEqual(jobs.cancel_project("p1"), 2)
+        gate.set()
+        time.sleep(0.5)
+        self.assertEqual(seen, [])
+        self.assertEqual(jobs.get(first)["state"], "cancelled")
+        self.assertEqual(jobs.get(second)["state"], "cancelled")
