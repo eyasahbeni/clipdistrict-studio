@@ -1,25 +1,25 @@
-# Security policy
+# ClipDistrict Studio security policy
 
-**Experimental prototype. Not certified safe for production use.**
+This is an experimental local-first video processing application, **not independently audited or guaranteed free of vulnerabilities**.
 
-Do not run as Administrator, disclose browser cookies, or process unknown video files outside a sandbox. Install a trusted, current FFmpeg build separately.
-
-## Security properties intended in v0.1
-
-- No browser cookie export, credential scraping, telemetry or silent auto-updates.
-- Read-only discovery through the official YouTube Data API; no YouTube stream downloads.
-- Local FFmpeg/ffprobe run through argument arrays, not shell injection-prone strings.
-- FFmpeg uses a file-only protocol whitelist and refuses to overwrite existing exports.
-- Explicit upload rights acknowledgement, typed confirmation, upload-only Google OAuth scope, private uploads only.
-- OAuth tokens are not intentionally written to disk by the CLI.
+- Binds to loopback (`127.0.0.1`) only, not the public network.
+- Browser POST requests must include an unpredictable per-process CSRF header.
+- User files are imported into a dedicated local data directory and served only by opaque UUIDs; the UI does not expose arbitrary local file paths.
+- Local file video processing calls FFmpeg with argument arrays, never shell-evaluated commands. FFmpeg/ffprobe are expected to be installed and verified separately.
+- No Google session cookies, telemetry, browser scraping, or silent model downloads.
+- YouTube public search uses the official YouTube Data API; third-party video download is not implemented.
+- The optional transcription model only downloads when a user explicitly approves the operation.
+- The optional Google OAuth Desktop client is stored under a dedicated local secrets directory; credentials must never be pushed to Git.
+- OAuth upload scopes are limited to `youtube.upload`; all uploads are private and require explicit human approval.
 
 ## Remaining risks
 
-- Untrusted media could exploit FFmpeg vulnerabilities. Isolate decoding for production.
-- Current dependencies are version-bounded but not hash-pinned or independently audited.
-- No signed Windows builds, sandboxed desktop GUI, SBOM or release provenance yet.
-- Upload integration has not been tested with a real Google account.
-- The prototype CLI does not enforce per-folder capability restrictions; local users control input/output paths.
-- Secure disclosure: use GitHub private vulnerability reporting if configured by repository owner.
+- **Untrusted media:** FFmpeg and its codec parsers process complex inputs. Avoid untrusted videos and consider a separate Windows VM/sandbox for unknown footage. Windows OS-level process sandboxing is not provided in this release.
+- **Security boundaries:** Folder/ID checks and loopback binding are helpful but not a guarantee against compromise of the user account or other local processes.
+- **Dependencies:** External binaries, optional Google libraries, and Whisper model weights are not bundled or cryptographically pinned in this source archive. Verify their provenance before installing.
+- **Large video files:** The server accepts imports up to 2 GB; consider system memory and free disk space. The local server should not run as Administrator.
+- **OAuth UI:** Google sign-in and upload flow have not been live-tested here; cloud account and consent configurations are provided by the user.
+- **Transcript safety:** Subtitle strings are untrusted data. They are not executed as code, but malformed subtitles can still expose codec/library bugs.
+- **Local privacy:** OAuth client JSON is placed in the user's application data folder and may remain there until removed by the user. Access token persistence has intentionally not been implemented.
 
-Do not put OAuth client JSON, credentials, cookies, videos, or transcripts into the repository.
+Report security issues using a private GitHub vulnerability report (when enabled) rather than posting live credentials or exploits in public issues.
