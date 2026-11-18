@@ -1,28 +1,23 @@
-# ClipDistrict Studio roadmap
+# Roadmap
 
-## v0.1 — published CLI baseline
-- [x] Official YouTube Data API GTA 6 video and live-stream metadata search
-- [x] Strict YouTube link parsing and metadata inspection
-- [x] Highlight candidates from local SRT (keyword heuristics, **not** AI)
-- [x] Local FFmpeg 1080x1920 cropping and MP4 export
-- [x] Optional private-only upload using Google OAuth
-- [x] Unit tests covering parsing and dangerous input
-- [ ] Real-world YouTube API/OAuth integration verification
+## v1.0 — Local browser studio (implemented)
+- YouTube official API public metadata search and official embedded video preview
+- Local video import (up to 2 GB), range-enabled playback, internal file IDs
+- SRT import, simple GTA-related highlight suggestions, optional local faster-whisper transcription
+- 9:16 MP4 exports with FFmpeg; two subtitle styles
+- Async background jobs and results/download view
+- Optional OAuth private upload, manual confirmation
+- Simple Windows batch starter, no UI dependencies, basic security and tests
 
-## v0.2 — next milestone
-- [ ] React user interface for discovery and clip review
-- [ ] Local video preview and approved source-file mapping
-- [ ] Local Whisper speech transcription (user-managed model installation)
-- [ ] Subtitle overlay and export job progress
-- [ ] Source-rights and permissions registry
-
-## v0.3 — later
-- [ ] AI-assisted highlight evaluation
-- [ ] Smart crop and face tracking
-- [ ] Batch clip approval
-- [ ] Signed Windows builds, pinned dependencies, CI security scanning
+## Pending before calling this a production application
+- Live end-to-end Google OAuth search/upload verification with real credentials
+- Strong OS-level process sandboxing for untrusted videos and model loaders
+- Advanced tracking-based reframing and AI highlight ranking
+- Editable caption timeline, trim handles, drag and drop multiple clips
+- Signed Windows desktop installer and reproducible pinned dependency builds
+- User review and accessibility testing on real Windows PCs
 
 ## Non-goals
-- Google/YouTube session cookie harvesting
-- Unauthorized download or reupload of streamer footage
-- Automatic public publishing without deliberate user approval
+- Harvesting Google session cookies
+- Circumventing YouTube protections or downloading third-party streams without required permissions and approvals
+- Blind automatic public publishing or mass reuploads of minimally altered third-party videos
