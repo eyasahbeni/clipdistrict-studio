@@ -46,6 +46,7 @@ DEFAULT_SETTINGS = {
     "clip_length": 0,              # 0 = auto (fits the video length)
     "clips_per_video": 0,          # 0 = auto (more clips for longer videos)
     "channel_tag": "",            # watermark text on the video (empty = none)
+    "tag_chosen": False,
     "default_hashtags": "#GTA6 #GTAVI #ViceCity #Shorts",
     # your own keywords: "phrase:weight" (weight 1-10, default 4)
     "keywords": "police chase:5, wanted level:4, five star:4, heist:4, crash:3, lucia:3, jason:3, "
@@ -84,6 +85,8 @@ def load_settings() -> dict:
         try:
             stored = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
             data.update({k: v for k, v in stored.items() if k in DEFAULT_SETTINGS})
+            if data.get("channel_tag") == "@ClipDistrict" and not stored.get("tag_chosen"):
+                data["channel_tag"] = ""     # old default watermark: now off unless you set it yourself
         except (OSError, ValueError):
             pass
     return data
@@ -94,6 +97,8 @@ def save_settings(values: dict) -> dict:
     for key, value in values.items():
         if key in DEFAULT_SETTINGS:
             data[key] = value
+    if "channel_tag" in values:
+        data["tag_chosen"] = True
     SETTINGS_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
     return data
 

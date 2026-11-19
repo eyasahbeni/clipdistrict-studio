@@ -73,7 +73,7 @@ def detect(video: Path, start: float, end: float, src_w: int, src_h: int, sample
 def crop_box(cx: float, cy: float, face_h: float, src_w: int, src_h: int, zoom: float = 1.0) -> dict:
     """Head-and-shoulders box around a face, in the facecam panel's shape, kept inside the frame."""
     ar = src_w / max(1, src_h)
-    box_h = min(1.0, face_h * 2.4 / zoom)            # face fills ~40% of the panel height            # face takes ~40% of the panel height
+    box_h = min(1.0, face_h * 1.9 / zoom)            # face fills ~half of the panel height            # face takes ~40% of the panel height
     box_w = box_h * PANEL_RATIO / ar                  # same shape as the panel (in pixels)
     if box_w > 1.0:
         box_w, box_h = 1.0, ar / PANEL_RATIO

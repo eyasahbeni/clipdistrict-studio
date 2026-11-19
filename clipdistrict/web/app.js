@@ -671,7 +671,7 @@ function faceBox(st) {
   const p = state.project, ar = (p.width || 1920) / (p.height || 1080), ratio = 1080 / 960;
   const b = st.cam_box; if (!b) return null;
   if (st.cam_manual || !b.face) return b;
-  let h = Math.min(1, b.face * 2.4 / (st.face_zoom || 1)), w = h * ratio / ar;
+  let h = Math.min(1, b.face * 1.9 / (st.face_zoom || 1)), w = h * ratio / ar;
   if (w > 1) { w = 1; h = ar / ratio; }
   const x = Math.min(Math.max(0, b.cx - w / 2), 1 - w), y = Math.min(Math.max(0, b.cy - h * 0.42), 1 - h);
   return { ...b, x, y, w, h };
@@ -1030,6 +1030,7 @@ function renderClips(force = false) {
           <button class="btn small ghost danger" data-delclip="${c.id}">Delete</button>
         </div>
       </div>
+      ${c.error && c.status === "ready" ? `<p class="hint bad">⚠️ ${esc(c.error)}</p>` : ""}
       ${uploadBox}
     </article>`;
   }).join("");
