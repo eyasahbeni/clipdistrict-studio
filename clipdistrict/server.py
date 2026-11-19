@@ -15,7 +15,7 @@ from flask import Flask, abort, jsonify, redirect, request, send_file, send_from
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from . import __version__, captions, importer, jobs, moments, projects, render, transcribe, uploader, workflow
-from .config import (APP_PASSWORD, HOSTED, PUBLIC_URL, WORKSPACE, FONTS_DIR, SECRETS_DIR, WEB_DIR, ensure_dirs, ffmpeg_bin, ffmpeg_has_captions, load_settings,
+from .config import (INBOX_DIR, APP_PASSWORD, HOSTED, PUBLIC_URL, WORKSPACE, FONTS_DIR, SECRETS_DIR, WEB_DIR, ensure_dirs, ffmpeg_bin, ffmpeg_has_captions, load_settings,
                      oauth_client_file, save_settings)
 
 app = Flask(__name__, static_folder=None)
@@ -284,7 +284,11 @@ def info():
     try:
         return jsonify(importer.fetch_info(_body().get("url", "")))
     except Exception as err:
-        return _err(f"Couldn't read that link: {str(err)[:300]}")
+        msg = str(err)
+        if "not a bot" in msg or "Sign in to confirm" in msg:
+            return _err("YouTube is blocking this server (bot check). Put the video in your inbox folder "
+                        "instead, or run the app on your own PC where links work.")
+        return _err(f"Couldn't read that link: {msg[:300]}")
 
 
 @app.get("/api/jobs")
@@ -338,6 +342,37 @@ def upload_project():
     if srt and srt.filename:
         transcribe.from_srt(srt.read().decode("utf-8-sig", errors="replace"), projects.transcript_path(pid))
     workflow.start_import(pid=pid, raw_file=raw, autopilot=request.form.get("autopilot") == "1")
+    return jsonify(meta)
+
+
+@app.get("/api/inbox")
+def inbox():
+    ensure_dirs()
+    items = []
+    for path in sorted(INBOX_DIR.iterdir(), key=lambda p: -p.stat().st_mtime):
+        if path.is_file() and path.suffix.lower() in importer.VIDEO_EXTS:
+            items.append({"name": path.name, "size": path.stat().st_size, "mtime": path.stat().st_mtime})
+    return jsonify({"folder": str(INBOX_DIR), "files": items})
+
+
+@app.post("/api/inbox/import")
+def inbox_import():
+    data = _body()
+    if not data.get("permission"):
+        return _err("Confirm the creator allows clipping before importing")
+    name = Path(str(data.get("name", ""))).name
+    src = INBOX_DIR / name
+    if not name or not src.is_file() or src.suffix.lower() not in importer.VIDEO_EXTS:
+        return _err("That file isn't in the inbox anymore")
+    try:
+        start, end = _num(data.get("start")), _num(data.get("end"))
+    except ValueError as err:
+        return _err(str(err))
+    if start is not None and end is not None and end <= start:
+        return _err("'To' must be after 'From'")
+    meta = workflow.start_import(copy_from=src, title=Path(name).stem, creator=data.get("creator", ""),
+                                 start=start, end=end, autopilot=bool(data.get("autopilot")),
+                                 permission_note="inbox file")
     return jsonify(meta)
 
 

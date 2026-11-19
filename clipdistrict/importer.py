@@ -116,3 +116,25 @@ def finish_import(project_id: str) -> dict:
     info = probe(projects.source_path(project_id))
     return projects.update(project_id, duration=info["duration"], width=info["width"],
                            height=info["height"], has_audio=info["has_audio"])
+
+
+VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
+
+
+def import_file(src: Path, dest: Path, start: float | None = None, end: float | None = None) -> Path:
+    """Copy a video into a project as an H.264 MP4, optionally keeping only start→end."""
+    if start is None and end is None and src.suffix.lower() == ".mp4":
+        shutil.copyfile(src, dest)
+        return dest
+    tmp = dest.with_name("source.converting.mp4")
+    cmd = [ffmpeg_bin(), "-hide_banner", "-nostdin", "-loglevel", "error", "-y"]
+    if start:
+        cmd += ["-ss", f"{start:.3f}"]
+    cmd += ["-i", str(src)]
+    if end is not None:
+        cmd += ["-t", f"{max(1.0, end - (start or 0)):.3f}"]
+    cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "160k",
+            "-movflags", "+faststart", str(tmp)]
+    subprocess.run(cmd, check=True, capture_output=True, timeout=6 * 3600)
+    tmp.replace(dest)
+    return dest

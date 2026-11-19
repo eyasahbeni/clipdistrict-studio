@@ -65,12 +65,16 @@ def analyze(pid: str, progress) -> dict:
 
 
 def import_job(pid: str, *, url: str = "", start=None, end=None, raw_file: Path | None = None,
-               autopilot: bool = False):
+               copy_from: Path | None = None, autopilot: bool = False):
     def run(progress):
         try:
             if url:
                 projects.update(pid, status="downloading")
                 importer.download(pid, url, start, end, on_progress=progress)
+            elif copy_from:
+                projects.update(pid, status="downloading")
+                progress(None, f"Copying {copy_from.name} from your inbox…")
+                importer.import_file(copy_from, projects.source_path(pid), start, end)
             elif raw_file:
                 progress(None, "Preparing video…")
                 importer.normalize(raw_file, projects.source_path(pid))
@@ -87,8 +91,12 @@ def import_job(pid: str, *, url: str = "", start=None, end=None, raw_file: Path 
         except Exception as err:
             if not projects.project_dir(pid).is_dir():
                 raise jobs.JobCancelled() from None   # project was deleted
-            projects.update(pid, status="error", error=str(err)[:500])
-            log(f"Import failed: {str(err)[:200]}", "error", pid)
+            msg = str(err)
+            if "not a bot" in msg or "Sign in to confirm" in msg:
+                msg = ("YouTube blocked this download (bot check on server IPs). Put the video in your "
+                       "inbox folder instead, or run the app on your own PC.")
+            projects.update(pid, status="error", error=msg[:500])
+            log(f"Import failed: {msg[:200]}", "error", pid)
             raise
         if autopilot:
             start_autopilot(pid)
@@ -97,12 +105,13 @@ def import_job(pid: str, *, url: str = "", start=None, end=None, raw_file: Path 
 
 
 def start_import(*, url: str = "", title: str = "", creator: str = "", start=None, end=None,
-                 raw_file: Path | None = None, pid: str = "", autopilot: bool = False,
-                 permission_note: str = "") -> dict:
+                 raw_file: Path | None = None, copy_from: Path | None = None, pid: str = "",
+                 autopilot: bool = False, permission_note: str = "") -> dict:
     meta = projects.load(pid) if pid else projects.create(title or url, url, creator)
     projects.update(meta["id"], permission_note=permission_note[:300], autopilot=autopilot)
     jobs.submit("import", f"Import: {meta['title'][:50]}",
-                import_job(meta["id"], url=url, start=start, end=end, raw_file=raw_file, autopilot=autopilot),
+                import_job(meta["id"], url=url, start=start, end=end, raw_file=raw_file, copy_from=copy_from,
+                           autopilot=autopilot),
                 project_id=meta["id"])
     return meta
 

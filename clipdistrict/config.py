@@ -34,6 +34,7 @@ APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
 
 WORKSPACE = Path(os.environ.get("CLIPDISTRICT_HOME", PACKAGE_DIR.parent / "workspace")).expanduser().resolve()
 PROJECTS_DIR = WORKSPACE / "projects"
+INBOX_DIR = WORKSPACE / "inbox"   # drop videos here (on Colab: Google Drive › My Drive › ClipDistrict › inbox)
 SECRETS_DIR = WORKSPACE / "secrets"
 SETTINGS_FILE = WORKSPACE / "settings.json"
 
@@ -72,7 +73,7 @@ DEFAULT_SETTINGS = {
 
 
 def ensure_dirs() -> None:
-    for folder in (WORKSPACE, PROJECTS_DIR, SECRETS_DIR):
+    for folder in (WORKSPACE, PROJECTS_DIR, SECRETS_DIR, INBOX_DIR):
         folder.mkdir(parents=True, exist_ok=True)
 
 

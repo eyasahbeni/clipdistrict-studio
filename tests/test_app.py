@@ -106,3 +106,30 @@ class TestCancel(unittest.TestCase):
         self.assertEqual(seen, [])
         self.assertEqual(jobs.get(first)["state"], "cancelled")
         self.assertEqual(jobs.get(second)["state"], "cancelled")
+
+
+@unittest.skipUnless(have_ffmpeg(), "ffmpeg not available")
+class TestInbox(unittest.TestCase):
+    def test_inbox_import_with_section(self):
+        import time
+        from clipdistrict import projects
+        from clipdistrict.config import INBOX_DIR
+        INBOX_DIR.mkdir(parents=True, exist_ok=True)
+        src = INBOX_DIR / "stream part.mkv"
+        subprocess.run([ffmpeg_bin(), "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=640x360:r=30:d=6",
+                        "-f", "lavfi", "-i", "sine=d=6", "-shortest", "-c:v", "libx264", "-preset", "ultrafast",
+                        "-c:a", "aac", str(src)], check=True)
+        c = app.test_client()
+        self.assertEqual([f["name"] for f in c.get("/api/inbox").get_json()["files"]], ["stream part.mkv"])
+        self.assertEqual(c.post("/api/inbox/import", json={"name": "../x.mp4", "permission": True}).status_code, 400)
+        meta = c.post("/api/inbox/import", json={"name": "stream part.mkv", "start": "1", "end": "4",
+                                                 "permission": True}).get_json()
+        for _ in range(60):
+            status = projects.load(meta["id"])["status"]
+            if status in ("ready", "error"):
+                break
+            time.sleep(0.5)
+        p = projects.load(meta["id"])
+        self.assertEqual(p["status"], "ready", p["error"])
+        self.assertAlmostEqual(p["duration"], 3, delta=0.5)
+        self.assertTrue(src.exists())  # original stays in the inbox

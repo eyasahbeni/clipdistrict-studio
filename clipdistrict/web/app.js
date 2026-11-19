@@ -113,6 +113,7 @@ function viewHome() {
       <label class="check"><input type="checkbox" id="autoImport" ${state.status.settings.autopilot ? "checked" : ""}>
         <span><b>Autopilot</b> · make the best Shorts${state.status.settings.auto_upload !== "off" ? " and upload them" : ""} automatically</span></label>
     </div>
+    <div class="inbox" id="inbox"></div>
     <div class="drop" id="drop">
       <b>Or drop a video file here</b> · MP4, MOV, MKV, WEBM · add an .srt too if you have one
       <input type="file" id="fileIn" accept="video/*,.mkv,.srt" multiple hidden>
@@ -148,12 +149,42 @@ function viewHome() {
   drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
   drop.addEventListener("dragleave", () => drop.classList.remove("over"));
   drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); importFiles([...e.dataTransfer.files]); });
+  loadInbox();
   $("#searchBtn").onclick = () => doSearch($("#q").value);
   $("#q").addEventListener("keydown", (e) => e.key === "Enter" && doSearch($("#q").value));
   $$(".chip").forEach((c) => (c.onclick = () => {
     $$(".chip").forEach((x) => x.classList.remove("on")); c.classList.add("on");
     $("#q").value = c.dataset.q.replace(" live", "");
     doSearch(c.dataset.q.replace(" live", ""), c.dataset.q.endsWith(" live"));
+  }));
+}
+
+async function loadInbox() {
+  const box = $("#inbox");
+  if (!box) return;
+  let data;
+  try { data = await api("/api/inbox"); } catch { return; }
+  const where = data.folder.includes("/drive/MyDrive/")
+    ? "Google Drive › My Drive › " + data.folder.split("/drive/MyDrive/")[1].replace(/\//g, " › ")
+    : data.folder;
+  box.innerHTML = `<div class="inbox-head"><b>📥 Your inbox</b>
+      <span class="muted">Put videos in <code>${esc(where)}</code></span>
+      <button class="btn small ghost" id="inboxRefresh">↻ Refresh</button></div>
+    ${data.files.length ? data.files.map((f, i) => `<div class="hit">
+        <span style="flex:1">🎞️ ${esc(f.name)} <span class="muted">· ${gb(f.size)}</span></span>
+        <button class="btn small primary" data-inbox="${i}">Import</button></div>`).join("")
+      : `<p class="hint">Empty. Add a video to that folder (from your phone, PC, or "Add to Drive" on a shared link), then click Refresh.</p>`}`;
+  $("#inboxRefresh").onclick = loadInbox;
+  $$("[data-inbox]", box).forEach((b) => (b.onclick = async () => {
+    if (!$("#perm").checked) return toast("Tick the box to confirm the creator allows clipping", true);
+    const f = data.files[Number(b.dataset.inbox)];
+    try {
+      const p = await api("/api/inbox/import", { json: {
+        name: f.name, start: $("#from").value, end: $("#to").value, creator: $("#creator").value,
+        autopilot: $("#autoImport").checked, permission: true,
+      } });
+      toast("Importing from your inbox…"); location.hash = "#/p/" + p.id;
+    } catch (e) { toast(e.message, true); }
   }));
 }
 
