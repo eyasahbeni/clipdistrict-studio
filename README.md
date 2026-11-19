@@ -8,6 +8,13 @@ Everything runs on your own computer. No paid AI API is needed.
 
 ![layouts](docs/preview.png)
 
+## Run it free in the cloud (nothing to install)
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/eyasahbeni/clipdistrict-studio/blob/main/ClipDistrict_Colab.ipynb)
+
+Click the badge → **Runtime → Change runtime type → T4 GPU** → **Runtime → Run all** → click **👉 Open ClipDistrict Studio**.
+Download your Shorts with step 4 before closing (or tick *Save to Google Drive*).
+
 ## What it does
 
 | Step | What happens |

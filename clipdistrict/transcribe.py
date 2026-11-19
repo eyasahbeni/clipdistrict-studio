@@ -9,15 +9,40 @@ from .highlights import parse_srt
 _models: dict = {}
 
 
+_force_cpu = False
+
+
 def _model(name: str):
-    if name not in _models:
+    """GPU when available (Colab, gaming PCs), otherwise CPU."""
+    key = (name, _force_cpu)
+    if key not in _models:
         from faster_whisper import WhisperModel
-        _models[name] = WhisperModel(name, device="auto", compute_type="int8")
-    return _models[name]
+        if _force_cpu:
+            _models[key] = WhisperModel(name, device="cpu", compute_type="int8")
+        else:
+            try:
+                _models[key] = WhisperModel(name, device="auto", compute_type="int8")
+            except Exception:
+                _models[key] = WhisperModel(name, device="cpu", compute_type="int8")
+    return _models[key]
 
 
 def transcribe(video: Path, out: Path, *, model: str = "small", language: str = "",
                duration: float = 0, on_progress=None) -> dict:
+    global _force_cpu
+    try:
+        return _transcribe(video, out, model=model, language=language, duration=duration,
+                           on_progress=on_progress)
+    except RuntimeError as err:
+        text = str(err).lower()
+        if _force_cpu or not any(k in text for k in ("cuda", "cudnn", "cublas", "gpu")):
+            raise
+        _force_cpu = True  # GPU libraries missing: fall back to CPU
+        return _transcribe(video, out, model=model, language=language, duration=duration,
+                           on_progress=on_progress)
+
+
+def _transcribe(video: Path, out: Path, *, model: str, language: str, duration: float, on_progress) -> dict:
     whisper = _model(model)
     segments, info = whisper.transcribe(
         str(video), language=language or None, word_timestamps=True,
