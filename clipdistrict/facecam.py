@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .config import ffmpeg_bin
 
-PANEL_RATIO = 1080 / 720          # width / height of the facecam panel in the Short
+PANEL_RATIO = 1080 / 960          # width / height of the facecam panel (top half of the Short)
 MODEL = Path(__file__).resolve().parent / "models" / "face_detection_yunet_2023mar.onnx"  # YuNet, MIT
 
 
@@ -41,7 +41,7 @@ def detect(video: Path, start: float, end: float, src_w: int, src_h: int, sample
         frame_count += 1
         h, w = img.shape[:2]
         if detector is None:
-            detector = cv2.FaceDetectorYN.create(str(MODEL), "", (w, h), 0.6, 0.3, 50)
+            detector = cv2.FaceDetectorYN.create(str(MODEL), "", (w, h), 0.5, 0.3, 50)
         detector.setInputSize((w, h))
         _, faces = detector.detect(img)
         for face in (faces if faces is not None else []):
@@ -62,7 +62,7 @@ def detect(video: Path, start: float, end: float, src_w: int, src_h: int, sample
         else:
             groups.append([f])
     best = max(groups, key=len)
-    if len(best) < max(2, frame_count // 5):
+    if len(best) < max(2, frame_count // 6):
         return None
     cx = sorted(f[0] for f in best)[len(best) // 2]
     cy = sorted(f[1] for f in best)[len(best) // 2]
@@ -73,7 +73,7 @@ def detect(video: Path, start: float, end: float, src_w: int, src_h: int, sample
 def crop_box(cx: float, cy: float, face_h: float, src_w: int, src_h: int, zoom: float = 1.0) -> dict:
     """Head-and-shoulders box around a face, in the facecam panel's shape, kept inside the frame."""
     ar = src_w / max(1, src_h)
-    box_h = min(1.0, face_h * 3.0 / zoom)            # face takes ~40% of the panel height
+    box_h = min(1.0, face_h * 2.4 / zoom)            # face fills ~40% of the panel height            # face takes ~40% of the panel height
     box_w = box_h * PANEL_RATIO / ar                  # same shape as the panel (in pixels)
     if box_w > 1.0:
         box_w, box_h = 1.0, ar / PANEL_RATIO

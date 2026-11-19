@@ -221,8 +221,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         hook_len = float(style.get("hook_seconds", 3.5))
         end = length if hook_len <= 0 else min(length, hook_len)
         hook_text = hook.upper() if upper else hook
+        seam = r"\an5\pos(540,960)" if style.get("layout") == "split" else ""   # between face and gameplay
         lines.append(f"Dialogue: 2,{_ts(0)},{_ts(end)},Hook,,0,0,0,,"
-                     + r"{\fad(120,200)\t(0,140,\fscx104\fscy104)\t(140,240,\fscx100\fscy100)}" + hook_text)
+                     + r"{" + seam + r"\fad(120,200)\t(0,140,\fscx104\fscy104)\t(140,240,\fscx100\fscy100)}" + hook_text)
 
     # --- channel tag + credit -----------------------------------------------
     tag = _clean(style.get("watermark", "")).strip()

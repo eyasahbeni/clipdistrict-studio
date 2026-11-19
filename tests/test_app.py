@@ -174,7 +174,7 @@ class TestFacecam(unittest.TestCase):
         b = crop_box(0.95, 0.05, 0.1, 1920, 1080)
         self.assertGreaterEqual(b["x"], 0); self.assertLessEqual(b["x"] + b["w"], 1.0001)
         self.assertGreaterEqual(b["y"], 0); self.assertLessEqual(b["y"] + b["h"], 1.0001)
-        self.assertAlmostEqual((b["w"] * 1920) / (b["h"] * 1080), 1.5, places=1)
+        self.assertAlmostEqual((b["w"] * 1920) / (b["h"] * 1080), 1080 / 960, places=1)
 
     def test_split_filter_uses_box_and_position(self):
         from clipdistrict.render import video_filter

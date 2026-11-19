@@ -520,9 +520,9 @@ function defaultStyle() {
   return {
     theme: s.default_theme || "vice-city", layout: s.default_layout || "blur",
     caption_position: "middle", caption_scale: 1, words_per_line: 0, uppercase: null,
-    captions: true, show_hook: true, hook_seconds: 3.5, show_progress: true, normalize_audio: true,
+    captions: true, show_hook: true, hook_seconds: 3.5, show_progress: false, normalize_audio: true,
     focus_x: 0.5, zoom: 1.0, cam_corner: "top-right", cam_size: 0.3, cam_position: "top", cam_box: null, face_zoom: 1,
-    watermark: s.channel_tag || "", credit: p.creator ? `Clip: ${p.creator.startsWith("@") ? p.creator : p.creator}` : "",
+    watermark: s.channel_tag || "", credit: "",
   };
 }
 
@@ -651,13 +651,13 @@ function renderLayoutOpts() {
 
 const faceCache = {};
 async function detectFace(force = false) {
-  const st = state.style, key = `${state.project.id}:${Math.round(state.trim.start)}`;
+  const st = state.style, key = state.project.id;
   if (!force && st.cam_manual) return;
   const label = $("#faceState");
   if (label) label.textContent = "Looking for the face…";
   let box = faceCache[key];
   if (box === undefined || force) {
-    try { box = (await api(`/api/projects/${state.project.id}/facecam?start=${state.trim.start}&end=${state.trim.end}`)).box; }
+    try { box = (await api(`/api/projects/${state.project.id}/facecam${force ? "?fresh=1" : ""}`)).box; }
     catch (e) { box = null; }
     faceCache[key] = box;
   }
@@ -668,10 +668,10 @@ async function detectFace(force = false) {
 
 function faceBox(st) {
   // same maths as facecam.crop_box on the server, so zoom keeps the face centred
-  const p = state.project, ar = (p.width || 1920) / (p.height || 1080), ratio = 1080 / 720;
+  const p = state.project, ar = (p.width || 1920) / (p.height || 1080), ratio = 1080 / 960;
   const b = st.cam_box; if (!b) return null;
   if (st.cam_manual || !b.face) return b;
-  let h = Math.min(1, b.face * 3.0 / (st.face_zoom || 1)), w = h * ratio / ar;
+  let h = Math.min(1, b.face * 2.4 / (st.face_zoom || 1)), w = h * ratio / ar;
   if (w > 1) { w = 1; h = ar / ratio; }
   const x = Math.min(Math.max(0, b.cx - w / 2), 1 - w), y = Math.min(Math.max(0, b.cy - h * 0.42), 1 - h);
   return { ...b, x, y, w, h };
@@ -835,17 +835,17 @@ function layoutPreview() {
     const h = 640, w = h * ar;
     place(vid, w, h, -(w - 360) * st.focus_x, 0);
   } else {
-    const camL = $("#lyCam"), topH = 240, botH = 400, faceBottom = st.cam_position === "bottom";
+    const camL = $("#lyCam"), topH = 320, botH = 320, faceBottom = st.cam_position === "bottom";
     Object.assign(camL.style, { left: 0, top: (faceBottom ? botH : 0) + "px", width: "360px", height: topH + "px" });
     Object.assign(main.style, { left: 0, top: (faceBottom ? 0 : topH) + "px", width: "360px", height: botH + "px" });
     $("#lyLine").style.top = (faceBottom ? botH - 1 : topH - 1) + "px";
     const w = botH * ar; place(vid, w, botH, -(w - 360) * st.focus_x, 0);
     const box = faceBox(st);
     if (box) {
-      const k = 360 / (sw * box.w), kh = 240 / (sh * box.h), s = Math.max(k, kh);
+      const k = 360 / (sw * box.w), kh = 320 / (sh * box.h), s = Math.max(k, kh);
       place($("video", camL), sw * s, sh * s, -box.x * sw * s, -box.y * sh * s);
     } else {
-      const regionW = sw * st.cam_size, regionH = regionW * (720 / 1080), k = 360 / regionW;
+      const regionW = sw * st.cam_size, regionH = regionW * (960 / 1080), k = 360 / regionW;
       const camX = st.cam_corner.includes("left") ? 0 : sw - regionW;
       const camY = st.cam_corner.includes("top") ? 0 : sh - regionH;
       place($("video", camL), sw * k, sh * k, -camX * k, -camY * k);
@@ -868,7 +868,7 @@ function enableFaceDrag(layer) {
     if (!drag) return;
     const b = drag.box, st = state.style;
     const nx = Math.min(Math.max(0, b.x - ((e.clientX - drag.x) / 360) * b.w), 1 - b.w);
-    const ny = Math.min(Math.max(0, b.y - ((e.clientY - drag.y) / 240) * b.h), 1 - b.h);
+    const ny = Math.min(Math.max(0, b.y - ((e.clientY - drag.y) / 320) * b.h), 1 - b.h);
     st.cam_box = { x: nx, y: ny, w: b.w, h: b.h }; st.cam_manual = true;
     layoutPreview();
   };
@@ -945,6 +945,8 @@ function drawPreview(force = false) {
 
   // hook
   const hook = $("#pvHook"), showHook = st.show_hook && st.hook && (st.hook_seconds <= 0 || local < st.hook_seconds);
+  hook.style.top = effLayout() === "split" ? "320px" : "";
+  hook.style.transform = effLayout() === "split" ? "translateY(-50%)" : "";
   hook.innerHTML = showHook ? `<span style="background:${t.accent};color:${t.accent_text};font-family:'${t.font}';font-size:${t.size * 0.72 * S * st.caption_scale}px">${esc(upper ? st.hook.toUpperCase() : st.hook)}</span>` : "";
   $("#pvTag").textContent = st.watermark || "";
   $("#pvCredit").textContent = st.credit || "";

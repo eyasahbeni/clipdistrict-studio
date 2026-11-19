@@ -166,6 +166,17 @@ def _set_clip(pid: str, clip_id: str, **changes) -> None:
         projects.save(meta)
 
 
+def project_face(pid: str) -> dict | None:
+    """The webcam never moves during a stream: find it once over the whole video and reuse it."""
+    meta = projects.load(pid)
+    if "cam_box" in meta:
+        return meta["cam_box"]
+    box = facecam.detect(projects.source_path(pid), 0, meta["duration"], meta.get("width") or 1920,
+                         meta.get("height") or 1080, samples=36)
+    projects.update(pid, cam_box=box)
+    return box
+
+
 def queue_render(pid: str, start: float, end: float, style: dict, *, moment_id: str = "",
                  title: str = "", titles: list | None = None, then=None) -> dict:
     clip_id = uuid.uuid4().hex[:8]
@@ -181,12 +192,26 @@ def queue_render(pid: str, start: float, end: float, style: dict, *, moment_id: 
         if not projects.source_path(pid).is_file():
             _set_clip(pid, clip_id, status="error", error="Source video was cleaned up")
             raise RuntimeError("Source video was cleaned up")
-        words = transcribe.words_between(transcribe.load(projects.transcript_path(pid)), start, end)
+        tpath = projects.transcript_path(pid)
+        meta = projects.load(pid)
+        if style.get("captions", True) and not tpath.is_file() and meta.get("has_audio", True):
+            projects.update(pid, status="transcribing")
+            progress(None, "This video has no subtitles yet, making them first…")
+            settings = load_settings()
+            try:
+                transcribe.transcribe(projects.source_path(pid), tpath, model=settings["whisper_model"],
+                                      language=settings["language"], duration=meta["duration"], on_progress=progress)
+                projects.update(pid, status="ready", error="")
+            except jobs.JobCancelled:
+                raise
+            except Exception as err:
+                projects.update(pid, status="ready",
+                                error=f"SUBTITLES_FAILED: Auto-subtitles failed ({str(err)[:200]}).")
+                _set_clip(pid, clip_id, error=f"No captions: subtitles failed ({str(err)[:160]})")
+        words = transcribe.words_between(transcribe.load(tpath), start, end)
         if style.get("layout") in ("auto", "split") and not style.get("cam_box"):
             progress(None, "Finding the facecam…")
-            meta = projects.load(pid)
-            box = facecam.detect(projects.source_path(pid), start, end, meta.get("width") or 1920,
-                                 meta.get("height") or 1080)
+            box = project_face(pid)
             if box:
                 style.update(layout="split", cam_box=box)
             elif style.get("layout") == "auto":

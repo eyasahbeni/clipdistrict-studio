@@ -45,7 +45,7 @@ DEFAULT_SETTINGS = {
     "default_layout": "auto",
     "clip_length": 0,              # 0 = auto (fits the video length)
     "clips_per_video": 0,          # 0 = auto (more clips for longer videos)
-    "channel_tag": "@ClipDistrict",
+    "channel_tag": "",            # watermark text on the video (empty = none)
     "default_hashtags": "#GTA6 #GTAVI #ViceCity #Shorts",
     # your own keywords: "phrase:weight" (weight 1-10, default 4)
     "keywords": "police chase:5, wanted level:4, five star:4, heist:4, crash:3, lucia:3, jason:3, "
