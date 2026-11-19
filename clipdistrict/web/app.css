@@ -311,3 +311,11 @@ label input, label select, label textarea { font-weight: 500; text-transform: no
 .inbox-head .muted { flex: 1; font-size: 12px; }
 .inbox code { color: var(--cyan); }
 .inbox .hit { background: #0f0818; }
+
+.request-box { margin-top: 14px; text-transform: none; letter-spacing: 0; font-size: 13px; color: var(--text); }
+.request-box input { margin-top: 6px; }
+.ai-badge { display: inline-block; margin-left: 8px; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 800;
+  background: var(--panel-2); color: var(--muted); border: 1px solid var(--line); }
+.ai-badge.on { background: linear-gradient(120deg, rgba(255,46,136,.25), rgba(0,229,255,.25)); color: #fff; border-color: transparent; }
+.upload-box { margin-top: 12px; padding: 14px; border-radius: 13px; background: var(--panel-2); display: grid; gap: 8px; }
+.upload-box .bar { height: 10px; margin: 0; }

@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 
 from .captions import THEMES, W, H, build_ass
-from .config import FONTS_DIR, ffmpeg_bin, ffmpeg_has_captions
+from .config import FONTS_DIR, ffmpeg_bin, ffmpeg_has_captions, gpu_encoder
 
 LAYOUTS = {
     "blur": "Full frame + blurred background",
@@ -55,6 +55,12 @@ def video_filter(style: dict) -> str:
             f"[bg][fg]overlay=(W-w)/2:(H-h)/2-60[base]")
 
 
+def video_codec(style: dict) -> list[str]:
+    if gpu_encoder() and not style.get("preset"):
+        return ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "21", "-b:v", "0"]
+    return ["-c:v", "libx264", "-preset", style.get("preset", "veryfast"), "-crf", "20"]
+
+
 def render(source: Path, output: Path, start: float, end: float, words: list[dict],
            style: dict, *, on_progress=None) -> Path:
     source, output = Path(source).resolve(), Path(output).resolve()
@@ -88,7 +94,7 @@ def render(source: Path, output: Path, start: float, end: float, words: list[dic
         cmd = [ffmpeg_bin(), "-hide_banner", "-nostdin", "-loglevel", "error", "-y",
                "-progress", "pipe:1", *inputs,
                "-filter_complex", graph, "-map", "[out]", *audio,
-               "-c:v", "libx264", "-preset", style.get("preset", "veryfast"), "-crf", "20",
+               *video_codec(style),
                "-maxrate", "14M", "-bufsize", "28M", "-pix_fmt", "yuv420p", "-r", "30",
                "-movflags", "+faststart", "-t", f"{duration:.3f}", str(tmp_out)]
         proc = subprocess.Popen(cmd, cwd=work, stdout=subprocess.PIPE, stderr=subprocess.PIPE,

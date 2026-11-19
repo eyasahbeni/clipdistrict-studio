@@ -102,21 +102,28 @@ function viewHome() {
       <button class="btn primary" id="importBtn">Find clips</button>
     </div>
     <div class="preview-strip" id="linkPreview"></div>
+    <label class="request-box">What moments do you want? <span class="muted">(optional)</span>
+      <span class="ai-badge ${state.status.ai ? "on" : ""}">${state.status.ai ? "✨ AI picking on" : "AI off · add a Gemini key in Settings"}</span>
+      <input id="request" type="text" placeholder="e.g. police chases, funny reactions, when he crashes the car"></label>
     <div class="import-options">
       <label>Only from <input id="from" type="text" placeholder="0:00 (optional)"></label>
       <label>To <input id="to" type="text" placeholder="end (optional)"></label>
       <label>Creator name (for credit) <input id="creator" type="text" placeholder="@IShowSpeed"></label>
     </div>
     <div class="import-foot">
-      <label class="check"><input type="checkbox" id="perm">
-        <span>This creator allows clipping (public clip policy or clipping program). I keep proof.</span></label>
       <label class="check"><input type="checkbox" id="autoImport" ${state.status.settings.autopilot ? "checked" : ""}>
         <span><b>Autopilot</b> · make the best Shorts${state.status.settings.auto_upload !== "off" ? " and upload them" : ""} automatically</span></label>
     </div>
     <div class="inbox" id="inbox"></div>
     <div class="drop" id="drop">
-      <b>Or drop a video file here</b> · MP4, MOV, MKV, WEBM · add an .srt too if you have one
-      <input type="file" id="fileIn" accept="video/*,.mkv,.srt" multiple hidden>
+      <b>⬆ Drop a video file here or click to choose</b> · MP4, MOV, MKV, WEBM
+      <input type="file" id="fileIn" accept="video/*,.mkv" hidden>
+    </div>
+    <div class="upload-box" id="uploadBox" hidden>
+      <div class="row" style="justify-content:space-between">
+        <b id="upName"></b><button class="btn small ghost danger" id="upCancel">Cancel</button></div>
+      <div class="bar"><i id="upBar" style="width:0"></i></div>
+      <span class="muted" id="upMsg">Starting…</span>
     </div>
   </section>
 
@@ -176,12 +183,11 @@ async function loadInbox() {
       : `<p class="hint">Empty. Add a video to that folder (from your phone, PC, or "Add to Drive" on a shared link), then click Refresh.</p>`}`;
   $("#inboxRefresh").onclick = loadInbox;
   $$("[data-inbox]", box).forEach((b) => (b.onclick = async () => {
-    if (!$("#perm").checked) return toast("Tick the box to confirm the creator allows clipping", true);
     const f = data.files[Number(b.dataset.inbox)];
     try {
       const p = await api("/api/inbox/import", { json: {
         name: f.name, start: $("#from").value, end: $("#to").value, creator: $("#creator").value,
-        autopilot: $("#autoImport").checked, permission: true,
+        autopilot: $("#autoImport").checked, request: $("#request").value,
       } });
       toast("Importing from your inbox…"); location.hash = "#/p/" + p.id;
     } catch (e) { toast(e.message, true); }
@@ -209,32 +215,69 @@ async function checkLink() {
 async function importLink() {
   const url = $("#link").value.trim();
   if (!url) return toast("Paste a video link first", true);
-  if (!$("#perm").checked) return toast("Tick the box to confirm the creator allows clipping", true);
   try {
     const p = await api("/api/projects", { json: {
       url, start: $("#from").value, end: $("#to").value, creator: $("#creator").value,
-      title: $("#linkPreview").dataset.title || "", permission: true, autopilot: $("#autoImport").checked,
+      title: $("#linkPreview").dataset.title || "", autopilot: $("#autoImport").checked,
+      request: $("#request").value,
     } });
     toast("Importing… you can follow progress at the bottom right");
     location.hash = "#/p/" + p.id;
   } catch (e) { toast(e.message, true); }
 }
 
+let uploading = null;
+
 async function importFiles(files) {
-  const video = files.find((f) => !f.name.toLowerCase().endsWith(".srt"));
-  const srt = files.find((f) => f.name.toLowerCase().endsWith(".srt"));
-  if (!video) return toast("Choose a video file", true);
-  if (!$("#perm").checked) return toast("Tick the box to confirm the creator allows clipping", true);
-  const form = new FormData();
-  form.append("file", video);
-  if (srt) form.append("srt", srt);
-  form.append("creator", $("#creator").value);
-  form.append("autopilot", $("#autoImport").checked ? "1" : "0");
-  toast("Uploading file to the app…");
+  const video = files.find((f) => /\.(mp4|mov|mkv|webm|m4v)$/i.test(f.name));
+  if (!video) return toast("Choose a video file (MP4, MOV, MKV or WEBM)", true);
+  if (uploading) return toast("Wait for the current upload to finish", true);
+  const box = $("#uploadBox"), bar = $("#upBar"), msg = $("#upMsg");
+  box.hidden = false; $("#upName").textContent = `⬆ ${video.name} · ${gb(video.size)}`;
+  const job = uploading = { cancelled: false, id: null };
+  $("#upCancel").onclick = async () => {
+    job.cancelled = true;
+    if (job.id) fetch(`/api/uploads/${job.id}`, { method: "DELETE" });
+    box.hidden = true; uploading = null; toast("Upload cancelled");
+  };
+  const CHUNK = 8 * 1024 * 1024;
+  const started = Date.now();
   try {
-    const p = await api("/api/projects/upload", { method: "POST", body: form });
+    const { id } = await api("/api/uploads", { method: "POST" });
+    job.id = id;
+    let offset = 0;
+    while (offset < video.size) {
+      if (job.cancelled) return;
+      const piece = video.slice(offset, offset + CHUNK);
+      let res, tries = 0;
+      for (;;) {
+        try {
+          res = await fetch(`/api/uploads/${id}?offset=${offset}`, { method: "PUT", body: piece });
+          if (res.ok) break;
+          throw new Error(`HTTP ${res.status}`);
+        } catch (err) {
+          if (++tries >= 5 || job.cancelled) throw new Error(`Upload stopped (${err.message}). Check your internet and try again.`);
+          msg.textContent = `Connection hiccup, retrying (${tries}/5)…`;
+          await new Promise((r) => setTimeout(r, 1500 * tries));
+        }
+      }
+      offset = (await res.json()).offset;
+      const secs = (Date.now() - started) / 1000, speed = offset / Math.max(secs, 0.5);
+      const eta = (video.size - offset) / Math.max(speed, 1);
+      bar.style.width = (offset / video.size) * 100 + "%";
+      msg.textContent = `${Math.round((offset / video.size) * 100)}% · ${gb(offset)} of ${gb(video.size)} · ${(speed / 1e6).toFixed(1)} MB/s · ${eta > 90 ? Math.round(eta / 60) + " min" : Math.round(eta) + " s"} left`;
+    }
+    msg.textContent = "Upload done, starting…";
+    const p = await api(`/api/uploads/${id}/finish`, { json: {
+      name: video.name, start: $("#from").value, end: $("#to").value, creator: $("#creator").value,
+      autopilot: $("#autoImport").checked, request: $("#request").value,
+    } });
+    uploading = null; box.hidden = true;
     location.hash = "#/p/" + p.id;
-  } catch (e) { toast(e.message, true); }
+  } catch (e) {
+    uploading = null; msg.textContent = e.message; msg.className = "hint bad";
+    toast(e.message, true);
+  }
 }
 
 async function doSearch(q, live = false) {
@@ -324,9 +367,9 @@ async function viewProject(id) {
     toast(`Freed ${(r.freed / 1e9).toFixed(2)} GB`); state.project.source_removed = true; stopPreview(); renderProjectBody();
   };
   $("#reBtn").onclick = async () => {
-    const len = prompt("Clip length in seconds (10–90)?", state.status.settings.clip_length);
+    const len = prompt("Clip length in seconds (10–90, or 0 = auto)?", state.status.settings.clip_length);
     if (len === null) return;
-    const count = prompt("How many clips?", state.status.settings.clips_per_video);
+    const count = prompt("How many clips (0 = auto)?", state.status.settings.clips_per_video);
     if (count === null) return;
     await api(`/api/projects/${id}/reanalyze`, { json: { clip_length: Number(len), clips_per_video: Number(count) } });
     state.status.settings.clip_length = Number(len); state.status.settings.clips_per_video = Number(count);
@@ -840,7 +883,7 @@ function restartPreview() { pv.videos.forEach((v) => (v.currentTime = state.trim
 function clipDescription(c) {
   const p = state.project, s = state.status.settings;
   const credit = p.creator ? `🎥 Credit: ${p.creator}${p.source_url ? ` — ${p.source_url}` : ""}\n` : (p.source_url ? `Source: ${p.source_url}\n` : "");
-  return `${c.title || ""}\n\n${credit}Clipped with permission.\n\n${s.default_hashtags || "#GTA6 #Shorts"}`;
+  return `${c.title || ""}\n\n${credit}${s.default_hashtags || "#GTA6 #Shorts"}`;
 }
 
 function renderClips(force = false) {
@@ -875,7 +918,7 @@ function renderClips(force = false) {
           <select data-f="privacy" style="width:auto">
             ${["private", "unlisted", "public"].map((x) => `<option ${d.privacy === x ? "selected" : ""}>${x}</option>`).join("")}
           </select>
-          <label class="check" style="flex:1"><input type="checkbox" data-f="rights" ${d.rights ? "checked" : ""}> I have permission to post this</label>
+
         </div>
         <button class="btn primary" data-upload="${c.id}" ${c.status !== "ready" ? "disabled" : ""}>Upload to YouTube</button>`;
     return `<article class="card clip" data-clip="${c.id}">
@@ -913,11 +956,10 @@ function renderClips(force = false) {
     const id = b.dataset.upload, d = state.drafts[id];
     if (!state.status.channel) { toast("Connect your YouTube channel in Settings first", true); $("#settingsDialog").showModal(); return; }
     if (!d.title.trim()) return toast("Add a title", true);
-    if (!d.rights) return toast("Confirm you have permission to post this clip", true);
     if (d.privacy === "public" && !confirm("Publish this Short publicly right now?")) return;
     try {
       await api(`/api/projects/${p.id}/clips/${id}/upload`, { json: {
-        title: d.title, description: d.description, tags: d.tags, privacy: d.privacy, rights_confirmed: true,
+        title: d.title, description: d.description, tags: d.tags, privacy: d.privacy,
         channel_id: d.channel_id || "",
       } });
       const c = p.clips.find((x) => x.id === id); c.upload = { state: "uploading" };
@@ -985,6 +1027,10 @@ function initSettings() {
   const dlg = $("#settingsDialog");
   $("#settingsBtn").onclick = () => { fillSettings(); dlg.showModal(); };
   $("#channelPill").addEventListener("click", fillSettings);
+  $("#saveAiKey").onclick = async () => {
+    await api("/api/settings", { json: { gemini_api_key: $("#aiKey").value } });
+    $("#aiKey").value = ""; await refreshStatus(); toast("Gemini key saved — AI picking is on");
+  };
   $("#saveKey").onclick = async () => {
     await api("/api/settings", { json: { youtube_api_key: $("#apiKey").value } });
     $("#apiKey").value = ""; await refreshStatus(); toast("API key saved");
@@ -1004,7 +1050,7 @@ function initSettings() {
   $("#saveSettings").onclick = async () => {
     const data = {
       whisper_model: $("#setWhisper").value, language: $("#setLang").value,
-      clip_length: Number($("#setLength").value), clips_per_video: Number($("#setCount").value),
+      clip_length: Number($("#setLength").value) || 0, clips_per_video: Number($("#setCount").value) || 0,
       channel_tag: $("#setTag").value, default_hashtags: $("#setTags").value, keywords: $("#setKeywords").value,
     };
     state.status.settings = await api("/api/settings", { json: data });
@@ -1032,7 +1078,9 @@ function fillSettings() {
   }));
   $("#setKeywords").value = s.keywords || "";
   $("#setWhisper").value = s.whisper_model; $("#setLang").value = s.language;
-  $("#setLength").value = s.clip_length; $("#setCount").value = s.clips_per_video;
+  $("#setLength").value = s.clip_length || ""; $("#setCount").value = s.clips_per_video || "";
+  $("#aiKeyState").textContent = st.ai ? "✓ AI picking is on" : "No key yet: the free rule-based picker is used";
+  $("#aiKeyState").className = "hint " + (st.ai ? "ok" : "");
   $("#setTag").value = s.channel_tag; $("#setTags").value = s.default_hashtags;
   $("#oauthHosted").innerHTML = st.hosted ? `Online mode: create the OAuth client as <b>Web application</b> and add this
     redirect URI in Google Cloud: <code>${esc(st.redirect_uri)}</code>. Paste the client JSON in the Space secret

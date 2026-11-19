@@ -43,8 +43,8 @@ DEFAULT_SETTINGS = {
     "language": "",            # empty = auto-detect
     "default_theme": "vice-city",
     "default_layout": "blur",
-    "clip_length": 35,
-    "clips_per_video": 6,
+    "clip_length": 0,              # 0 = auto (fits the video length)
+    "clips_per_video": 0,          # 0 = auto (more clips for longer videos)
     "channel_tag": "@ClipDistrict",
     "default_hashtags": "#GTA6 #GTAVI #ViceCity #Shorts",
     # your own keywords: "phrase:weight" (weight 1-10, default 4)
@@ -126,6 +126,24 @@ def oauth_client_file() -> Path | None:
         return Path(configured).expanduser()
     default = SECRETS_DIR / "client_secret.json"
     return default if default.is_file() else None
+
+
+_nvenc: bool | None = None
+
+
+def gpu_encoder() -> bool:
+    """True if an NVIDIA GPU encoder works here (Colab T4, gaming PCs) — renders several times faster."""
+    global _nvenc
+    if _nvenc is None:
+        import subprocess
+        try:
+            r = subprocess.run([ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                                "color=s=256x256:d=0.2", "-c:v", "h264_nvenc", "-f", "null", "-"],
+                               capture_output=True, timeout=30)
+            _nvenc = r.returncode == 0
+        except Exception:
+            _nvenc = False
+    return _nvenc
 
 
 _caption_support: bool | None = None

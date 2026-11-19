@@ -14,7 +14,7 @@ import secrets
 from flask import Flask, abort, jsonify, redirect, request, send_file, send_from_directory, session
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from . import __version__, captions, importer, jobs, moments, projects, render, transcribe, uploader, workflow
+from . import __version__, ai, captions, importer, jobs, moments, projects, render, transcribe, uploader, workflow
 from .config import (INBOX_DIR, APP_PASSWORD, HOSTED, PUBLIC_URL, WORKSPACE, FONTS_DIR, SECRETS_DIR, WEB_DIR, ensure_dirs, ffmpeg_bin, ffmpeg_has_captions, load_settings,
                      oauth_client_file, save_settings)
 
@@ -159,7 +159,7 @@ def status():
     channels = uploader.list_channels()
     return jsonify({
         "version": __version__, "ffmpeg": ffmpeg_ok, "whisper": whisper_ok,
-        "api_key": bool(_api_key()), "oauth_client": bool(oauth_client_file()),
+        "api_key": bool(_api_key()), "oauth_client": bool(oauth_client_file()), "ai": bool(ai.api_key()),
         "channel": channels[0] if channels else None, "channels": channels,
         "settings": load_settings(), "storage": workflow.storage(),
         "hosted": HOSTED, "public_url": PUBLIC_URL, "redirect_uri": _redirect_uri() if HOSTED else "",
@@ -176,6 +176,8 @@ def themes():
 @app.post("/api/settings")
 def settings():
     data = _body()
+    if "gemini_api_key" in data:
+        ai.save_key(str(data.pop("gemini_api_key")))
     if "youtube_api_key" in data:
         ensure_dirs()
         API_KEY_FILE.write_text(str(data.pop("youtube_api_key")).strip(), encoding="utf-8")
@@ -312,8 +314,6 @@ def list_projects():
 @app.post("/api/projects")
 def create_project():
     data = _body()
-    if not data.get("permission"):
-        return _err("Confirm the creator allows clipping before importing")
     try:
         url = importer.check_url(data.get("url", ""))
         start, end = _num(data.get("start")), _num(data.get("end"))
@@ -323,7 +323,7 @@ def create_project():
         return _err("'To' must be after 'From'")
     meta = workflow.start_import(url=url, title=data.get("title") or url, creator=data.get("creator", ""),
                                  start=start, end=end, autopilot=bool(data.get("autopilot")),
-                                 permission_note=str(data.get("permission_note", "")))
+                                 request=str(data.get("request", "")))
     return jsonify(meta)
 
 
@@ -345,6 +345,72 @@ def upload_project():
     return jsonify(meta)
 
 
+# ------------------------------------------------------- chunked uploads ----
+UPLOADS_DIR = WORKSPACE / "uploads"
+UPLOAD_ID_RE = __import__("re").compile(r"^[a-f0-9]{16}$")
+
+
+def _upload_part(uid: str) -> Path:
+    if not UPLOAD_ID_RE.fullmatch(uid or ""):
+        abort(404)
+    return UPLOADS_DIR / f"{uid}.part"
+
+
+@app.post("/api/uploads")
+def upload_start():
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    uid = uuid.uuid4().hex[:16]
+    _upload_part(uid).write_bytes(b"")
+    return jsonify({"id": uid, "offset": 0})
+
+
+@app.put("/api/uploads/<uid>")
+def upload_chunk(uid):
+    part = _upload_part(uid)
+    if not part.is_file():
+        return _err("Upload expired, start again", 404)
+    offset = int(request.args.get("offset", -1))
+    size = part.stat().st_size
+    if offset != size:                       # tell the browser where to resume
+        return jsonify({"offset": size, "resync": True})
+    with part.open("ab") as fh:
+        fh.write(request.get_data(cache=False))
+    return jsonify({"offset": part.stat().st_size})
+
+
+@app.post("/api/uploads/<uid>/finish")
+def upload_finish(uid):
+    part = _upload_part(uid)
+    data = _body()
+    name = Path(str(data.get("name", "video.mp4"))).name
+    suffix = Path(name).suffix.lower()
+    if suffix not in importer.VIDEO_EXTS:
+        part.unlink(missing_ok=True)
+        return _err("Video must be MP4, MOV, MKV or WEBM")
+    if not part.is_file() or part.stat().st_size == 0:
+        return _err("Upload is empty, try again")
+    try:
+        start, end = _num(data.get("start")), _num(data.get("end"))
+    except ValueError as err:
+        return _err(str(err))
+    meta = projects.create(Path(name).stem, "", data.get("creator", ""))
+    raw = projects.project_dir(meta["id"]) / ("upload" + suffix)
+    part.replace(raw)
+    if start is None and end is None:
+        meta = workflow.start_import(pid=meta["id"], raw_file=raw, autopilot=bool(data.get("autopilot")),
+                                     request=str(data.get("request", "")))
+    else:
+        meta = workflow.start_import(pid=meta["id"], copy_from=raw, start=start, end=end,
+                                     autopilot=bool(data.get("autopilot")), request=str(data.get("request", "")))
+    return jsonify(meta)
+
+
+@app.delete("/api/uploads/<uid>")
+def upload_cancel(uid):
+    _upload_part(uid).unlink(missing_ok=True)
+    return jsonify({"ok": True})
+
+
 @app.get("/api/inbox")
 def inbox():
     ensure_dirs()
@@ -358,8 +424,6 @@ def inbox():
 @app.post("/api/inbox/import")
 def inbox_import():
     data = _body()
-    if not data.get("permission"):
-        return _err("Confirm the creator allows clipping before importing")
     name = Path(str(data.get("name", ""))).name
     src = INBOX_DIR / name
     if not name or not src.is_file() or src.suffix.lower() not in importer.VIDEO_EXTS:
@@ -372,7 +436,7 @@ def inbox_import():
         return _err("'To' must be after 'From'")
     meta = workflow.start_import(copy_from=src, title=Path(name).stem, creator=data.get("creator", ""),
                                  start=start, end=end, autopilot=bool(data.get("autopilot")),
-                                 permission_note="inbox file")
+                                 request=str(data.get("request", "")))
     return jsonify(meta)
 
 
@@ -514,8 +578,6 @@ def delete_clip(pid, cid):
 @app.post("/api/projects/<pid>/clips/<cid>/upload")
 def upload_clip(pid, cid):
     data = _body()
-    if not data.get("rights_confirmed"):
-        return _err("Confirm you have permission to post this clip")
     path = projects.clip_path(pid, cid)
     if not path.is_file():
         return _err("Render the clip first")

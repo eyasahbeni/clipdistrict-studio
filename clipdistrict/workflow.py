@@ -11,7 +11,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import importer, jobs, moments, projects, render, transcribe, uploader
+from . import ai, importer, jobs, moments, projects, render, transcribe, uploader
 from .config import PROJECTS_DIR, WORKSPACE, ensure_dirs, load_settings, save_settings
 
 ACTIVITY_FILE = WORKSPACE / "activity.json"
@@ -38,6 +38,22 @@ def activity() -> list[dict]:
 
 
 # ------------------------------------------------------------------ analysis
+def plan(duration: float, clip_length: float = 0, clips: int = 0) -> dict:
+    """How long and how many clips, so short videos still give several different moments."""
+    if clip_length and clip_length > 0:
+        target = float(clip_length)
+    else:
+        target = 20.0 if duration < 180 else 30.0 if duration < 900 else 40.0
+    target = max(8.0, min(target, duration * 0.5)) if duration >= 16 else max(3.0, duration)
+    if clips and clips > 0:
+        count = int(clips)
+    else:
+        count = 2 if duration < 60 else 3 if duration < 300 else 5 if duration < 900 else 8 if duration < 1800 else 10
+    count = max(1, min(count, int(duration // max(target, 1)) or 1))
+    return {"target": target, "count": count,
+            "min": max(5.0, round(target * 0.6)), "max": min(90.0, round(target * 1.6))}
+
+
 def analyze(pid: str, progress) -> dict:
     meta = projects.load(pid)
     settings = load_settings()
@@ -56,11 +72,32 @@ def analyze(pid: str, progress) -> dict:
         except Exception as err:
             warning = f"Auto-subtitles failed ({str(err)[:160]}). Clips were picked from audio only."
     projects.update(pid, status="analyzing")
-    progress(None, "Finding the best moments…")
-    loud = moments.loudness_curve(src) if meta.get("has_audio", True) else None
-    found = moments.find_moments(transcribe.load(tpath), loud, meta["duration"],
-                                 length=float(settings["clip_length"]), count=int(settings["clips_per_video"]),
-                                 keywords=moments.parse_keywords(settings["keywords"]))
+    sizes = plan(meta["duration"], float(settings["clip_length"] or 0), int(settings["clips_per_video"] or 0))
+    transcript = transcribe.load(tpath)
+    request = meta.get("request", "")
+    found = []
+    if ai.api_key() and transcript.get("segments"):
+        progress(None, f"AI is picking the {sizes['count']} best moments…")
+        try:
+            picks = ai.pick_moments(transcript, meta["duration"], count=sizes["count"], min_len=sizes["min"],
+                                    max_len=sizes["max"], request=request)
+            for m in picks:
+                text = " ".join(w["word"] for w in transcribe.words_between(transcript, m["start"], m["end"]))
+                found.append({"id": uuid.uuid4().hex[:8], "start": round(m["start"], 2), "end": round(m["end"], 2),
+                              "score": m["score"], "reasons": ["AI: " + m["reason"]] if m["reason"] else ["AI pick"],
+                              "hook": m["hook"].upper() or moments.hook_line(text),
+                              "titles": [t for t in [m["title"]] + moments.title_ideas(text) if t][:4],
+                              "transcript": text[:600], "ai": True})
+        except Exception as err:
+            warning = (warning + " " if warning else "") + f"AI picking failed ({str(err)[:120]}), used the free picker."
+    if not found:
+        progress(None, "Finding the best moments…")
+        loud = moments.loudness_curve(src) if meta.get("has_audio", True) else None
+        keywords = moments.parse_keywords(settings["keywords"])
+        if request:  # "moments to include" without AI: treat the words as strong keywords
+            keywords.update({k: 7.0 for k in moments.parse_keywords(request)})
+        found = moments.find_moments(transcript, loud, meta["duration"], length=sizes["target"],
+                                     count=sizes["count"], keywords=keywords)
     return projects.update(pid, status="ready", moments=found, error=warning)
 
 
@@ -106,9 +143,10 @@ def import_job(pid: str, *, url: str = "", start=None, end=None, raw_file: Path 
 
 def start_import(*, url: str = "", title: str = "", creator: str = "", start=None, end=None,
                  raw_file: Path | None = None, copy_from: Path | None = None, pid: str = "",
-                 autopilot: bool = False, permission_note: str = "") -> dict:
+                 autopilot: bool = False, permission_note: str = "", request: str = "") -> dict:
     meta = projects.load(pid) if pid else projects.create(title or url, url, creator)
-    projects.update(meta["id"], permission_note=permission_note[:300], autopilot=autopilot)
+    meta = projects.update(meta["id"], permission_note=permission_note[:300], autopilot=autopilot,
+                           request=request.strip()[:300])
     jobs.submit("import", f"Import: {meta['title'][:50]}",
                 import_job(meta["id"], url=url, start=start, end=end, raw_file=raw_file, copy_from=copy_from,
                            autopilot=autopilot),
@@ -248,7 +286,12 @@ def free_source(pid: str) -> int:
 
 
 def sweep_temp() -> None:
-    """Remove half-finished downloads left by a crash or a closed window."""
+    """Remove half-finished downloads and uploads left by a crash or a closed window."""
+    uploads = WORKSPACE / "uploads"
+    if uploads.is_dir():
+        for path in uploads.glob("*.part"):
+            if time.time() - path.stat().st_mtime > 86400:
+                path.unlink(missing_ok=True)
     if not PROJECTS_DIR.is_dir():
         return
     for path in PROJECTS_DIR.glob("*/*"):

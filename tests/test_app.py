@@ -35,8 +35,8 @@ class TestServer(unittest.TestCase):
         themes = self.c.get("/api/themes").get_json()
         self.assertIn("vice-city", [t["id"] for t in themes["themes"]])
 
-    def test_import_needs_permission(self):
-        r = self.c.post("/api/projects", json={"url": "https://youtube.com/watch?v=ABCDEFGHI01"})
+    def test_import_rejects_non_links(self):
+        r = self.c.post("/api/projects", json={"url": "not a link"})
         self.assertEqual(r.status_code, 400)
 
     def test_rejects_local_urls(self):
@@ -121,9 +121,8 @@ class TestInbox(unittest.TestCase):
                         "-c:a", "aac", str(src)], check=True)
         c = app.test_client()
         self.assertEqual([f["name"] for f in c.get("/api/inbox").get_json()["files"]], ["stream part.mkv"])
-        self.assertEqual(c.post("/api/inbox/import", json={"name": "../x.mp4", "permission": True}).status_code, 400)
-        meta = c.post("/api/inbox/import", json={"name": "stream part.mkv", "start": "1", "end": "4",
-                                                 "permission": True}).get_json()
+        self.assertEqual(c.post("/api/inbox/import", json={"name": "../x.mp4"}).status_code, 400)
+        meta = c.post("/api/inbox/import", json={"name": "stream part.mkv", "start": "1", "end": "4"}).get_json()
         for _ in range(60):
             status = projects.load(meta["id"])["status"]
             if status in ("ready", "error"):
@@ -133,3 +132,37 @@ class TestInbox(unittest.TestCase):
         self.assertEqual(p["status"], "ready", p["error"])
         self.assertAlmostEqual(p["duration"], 3, delta=0.5)
         self.assertTrue(src.exists())  # original stays in the inbox
+
+
+class TestPlanAndAI(unittest.TestCase):
+    def test_plan_gives_several_clips(self):
+        from clipdistrict.workflow import plan
+        self.assertEqual(plan(33)["count"], 2)
+        self.assertLess(plan(33)["target"], 20)
+        self.assertGreaterEqual(plan(1200)["count"], 5)
+        self.assertEqual(plan(600, clip_length=30, clips=4)["count"], 4)
+
+    def test_ai_pick_parses_and_removes_overlaps(self):
+        from unittest import mock
+        from clipdistrict import ai
+        fake = ('```json\n[{"start": 10, "end": 30, "score": 90, "title": "No way 😳", "hook": "NO WAY", "reason": "big"},'
+                '{"start": 20, "end": 40, "score": 50, "title": "x", "hook": "y", "reason": "overlap"},'
+                '{"start": 60, "end": 80, "score": 70, "title": "Chase", "hook": "RUN", "reason": "chase"}]\n```')
+        tr = {"segments": [{"start": 0, "end": 100, "text": "hello", "words": []}]}
+        with mock.patch.object(ai, "api_key", return_value="k"), mock.patch.object(ai, "_ask", return_value=fake):
+            got = ai.pick_moments(tr, 100, count=3, min_len=10, max_len=30)
+        self.assertEqual([(m["start"], m["end"]) for m in got], [(10, 30), (60, 80)])
+        self.assertEqual(got[0]["hook"], "NO WAY")
+
+
+class TestChunkedUpload(unittest.TestCase):
+    def test_chunks_resume_and_finish(self):
+        c = app.test_client()
+        uid = c.post("/api/uploads").get_json()["id"]
+        self.assertEqual(c.put(f"/api/uploads/{uid}?offset=0", data=b"a" * 10).get_json()["offset"], 10)
+        # wrong offset -> server tells the real one, nothing appended
+        r = c.put(f"/api/uploads/{uid}?offset=4", data=b"b" * 5).get_json()
+        self.assertEqual(r, {"offset": 10, "resync": True})
+        self.assertEqual(c.put(f"/api/uploads/{uid}?offset=10", data=b"c" * 5).get_json()["offset"], 15)
+        self.assertEqual(c.post(f"/api/uploads/{uid}/finish", json={"name": "x.exe"}).status_code, 400)
+        self.assertEqual(c.put("/api/uploads/../../etc?offset=0", data=b"x").status_code, 404)

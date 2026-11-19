@@ -21,6 +21,7 @@ Download your Shorts with step 4 before closing (or tick *Save to Google Drive*)
 |---|---|
 | **Import** | Paste a YouTube / Twitch / Kick link, or drop a video file. Choose just a part of a long stream with *Only from / To*. |
 | **Subtitles** | Speech is transcribed locally with Whisper (free, offline after the first download). You can also drop your own `.srt`. |
+| **AI picking** | Add a free Gemini key (Settings, or Colab's 🔑 Gemini secret) and the AI picks the most viral, self-contained moments, writes titles and hooks, and follows your request (“police chases, funny reactions”). Without a key a free rule-based picker is used. |
 | **Best moments** | Each moment gets a score and a reason: hype words ("no way", "GTA 6", "police chase"), **your own keywords** (Settings), screaming / loud reactions, fast talking. Clips start right on the first word. |
 | **Search the stream** | Type what the streamer says ("police chase, lucia") and jump to every time he said it → **+ Make clip**. |
 | **Edit** | Live 9:16 preview. Trim, pick a caption theme, layout, caption position/size, words per line, hook title, channel tag and credit line. |

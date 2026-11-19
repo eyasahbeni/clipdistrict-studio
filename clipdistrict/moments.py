@@ -153,9 +153,14 @@ def find_moments(transcript: dict, loudness: np.ndarray | None, duration: float,
 
     top = max((c["score"] for c in picked), default=1) or 1
     result = []
+    prev_end = 0.0
     for c in sorted(picked, key=lambda c: c["start"]):
         start, end = _snap(c["start"], c["end"], segments, duration)
         start, end = _trim_silence(start, end, words, starts, duration)
+        start = max(start, prev_end)          # never repeat the end of the previous clip
+        if end - start < 5:
+            continue
+        prev_end = end
         text = text_between(start, end)
         result.append({
             "id": uuid.uuid4().hex[:8],
