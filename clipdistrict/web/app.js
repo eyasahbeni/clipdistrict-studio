@@ -340,9 +340,15 @@ function renderProjectBody() {
   const p = state.project, body = $("#pBody");
   $("#pBadge").innerHTML = statusBadge(p.status);
   $("#pError").innerHTML = p.error ? `<div class="card" style="padding:12px 16px;margin-bottom:16px;border-color:${p.status === "error" ? "var(--red)" : "var(--orange)"}">${esc(p.error)}</div>` : "";
+  if (p.status === "error") {
+    body.innerHTML = `<div class="card empty"><h3 style="margin:0 0 6px">❌ Import failed</h3>
+      <p>Read the message above. Delete this project and try again
+      ${p.source_url ? "with a file from your inbox, or run the app on your PC for YouTube links" : ""}.</p></div>`;
+    return;
+  }
   if (p.status !== "ready") {
     body.innerHTML = `<div class="card empty" id="progressCard"><h3 style="margin:0 0 6px">Working on it…</h3>
-      <p id="progressMsg">${p.status === "error" ? "Import failed." : "Download → subtitles → best moments. You can leave this page."}</p>
+      <p id="progressMsg">Download → subtitles → best moments. You can leave this page.</p>
       <div class="bar indet" style="max-width:420px;margin:14px auto 0"><i id="progressBar"></i></div></div>`;
     return;
   }
