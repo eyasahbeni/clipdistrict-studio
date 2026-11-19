@@ -70,7 +70,9 @@ def analyze(pid: str, progress) -> dict:
         except jobs.JobCancelled:
             raise
         except Exception as err:
-            warning = f"Auto-subtitles failed ({str(err)[:160]}). Clips were picked from audio only."
+            print(f"[subtitles] failed: {err!r}", flush=True)
+            warning = (f"SUBTITLES_FAILED: Auto-subtitles failed ({str(err)[:200]}). "
+                       "No captions, and moments were picked from loudness only.")
     projects.update(pid, status="analyzing")
     sizes = plan(meta["duration"], float(settings["clip_length"] or 0), int(settings["clips_per_video"] or 0))
     transcript = transcribe.load(tpath)

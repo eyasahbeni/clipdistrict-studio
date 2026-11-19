@@ -9,7 +9,9 @@ from .highlights import parse_srt
 _models: dict = {}
 
 
-_force_cpu = False
+import os
+
+_force_cpu = os.environ.get("CLIPDISTRICT_FORCE_CPU") == "1"
 
 
 def _model(name: str):
@@ -33,11 +35,13 @@ def transcribe(video: Path, out: Path, *, model: str = "small", language: str = 
     try:
         return _transcribe(video, out, model=model, language=language, duration=duration,
                            on_progress=on_progress)
-    except RuntimeError as err:
-        text = str(err).lower()
-        if _force_cpu or not any(k in text for k in ("cuda", "cudnn", "cublas", "gpu")):
+    except Exception as err:
+        if _force_cpu or type(err).__name__ == "JobCancelled":
             raise
-        _force_cpu = True  # GPU libraries missing: fall back to CPU
+        print(f"[subtitles] GPU failed ({err}); retrying on CPU", flush=True)
+        _force_cpu = True  # GPU libraries missing or broken: fall back to CPU
+        if on_progress:
+            on_progress(None, "GPU subtitles failed, using CPU (slower)…")
         return _transcribe(video, out, model=model, language=language, duration=duration,
                            on_progress=on_progress)
 

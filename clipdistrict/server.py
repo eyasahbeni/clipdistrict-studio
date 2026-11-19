@@ -488,6 +488,16 @@ def reanalyze(pid):
     return jsonify({"ok": True})
 
 
+@app.post("/api/projects/<pid>/retranscribe")
+def retranscribe(pid):
+    if not projects.source_path(pid).is_file():
+        return _err("The source video was cleaned up, import it again")
+    projects.transcript_path(pid).unlink(missing_ok=True)
+    projects.update(pid, error="", status="transcribing")
+    jobs.submit("analyze", "Subtitles + moments again", lambda p: workflow.analyze(pid, p)["id"], project_id=pid)
+    return jsonify({"ok": True})
+
+
 @app.get("/api/projects/<pid>/search")
 def search_stream(pid):
     meta = projects.load(pid)

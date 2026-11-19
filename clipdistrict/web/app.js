@@ -382,7 +382,15 @@ async function viewProject(id) {
 function renderProjectBody() {
   const p = state.project, body = $("#pBody");
   $("#pBadge").innerHTML = statusBadge(p.status);
-  $("#pError").innerHTML = p.error ? `<div class="card" style="padding:12px 16px;margin-bottom:16px;border-color:${p.status === "error" ? "var(--red)" : "var(--orange)"}">${esc(p.error)}</div>` : "";
+  const subFail = (p.error || "").startsWith("SUBTITLES_FAILED:");
+  $("#pError").innerHTML = p.error ? `<div class="card" style="padding:12px 16px;margin-bottom:16px;border-color:${p.status === "error" ? "var(--red)" : "var(--orange)"}">
+      ${subFail ? "<b>⚠️ No subtitles → no captions and weaker moments.</b><br>" : ""}${esc(p.error.replace("SUBTITLES_FAILED: ", ""))}
+      ${subFail ? `<div style="margin-top:10px"><button class="btn small primary" id="retrySubs">↻ Retry subtitles</button></div>` : ""}</div>` : "";
+  const retry = $("#retrySubs");
+  if (retry) retry.onclick = async () => {
+    try { await api(`/api/projects/${p.id}/retranscribe`, { method: "POST" }); state.project.status = "transcribing"; state.project.error = ""; renderProjectBody(); toast("Making subtitles again…"); }
+    catch (e) { toast(e.message, true); }
+  };
   if (p.status === "error") {
     body.innerHTML = `<div class="card empty"><h3 style="margin:0 0 6px">❌ Import failed</h3>
       <p>Read the message above. Delete this project and try again
