@@ -521,7 +521,7 @@ function defaultStyle() {
     theme: s.default_theme || "vice-city", layout: s.default_layout || "blur",
     caption_position: "middle", caption_scale: 1, words_per_line: 0, uppercase: null,
     captions: true, show_hook: true, hook_seconds: 3.5, show_progress: true, normalize_audio: true,
-    focus_x: 0.5, zoom: 1.0, cam_corner: "top-right", cam_size: 0.3,
+    focus_x: 0.5, zoom: 1.0, cam_corner: "top-right", cam_size: 0.3, cam_position: "top", cam_box: null, face_zoom: 1,
     watermark: s.channel_tag || "", credit: p.creator ? `Clip: ${p.creator.startsWith("@") ? p.creator : p.creator}` : "",
   };
 }
@@ -536,7 +536,9 @@ async function selectMoment(id, scroll = true) {
   drawTimeline();
   const { words } = await api(`/api/projects/${p.id}/words?start=${Math.max(0, m.start - 30)}&end=${m.end + 60}`);
   state.words = words;
+  if (!state.style.cam_manual) state.style.cam_box = null;
   renderEditor();
+  if (state.style.layout === "auto" || state.style.layout === "split") detectFace();
   if (scroll) $("#editorWrap").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -630,12 +632,54 @@ function renderLayoutOpts() {
   const st = state.style, box = $("#layoutOpts");
   let html = `<label>Horizontal focus <input type="range" min="0" max="1" step="0.01" data-k="focus_x" value="${st.focus_x}"></label>`;
   if (st.layout === "blur") html += `<label>Zoom <input type="range" min="1" max="2" step="0.05" data-k="zoom" value="${st.zoom}"></label>`;
-  if (st.layout === "split") html += `<label>Facecam size <input type="range" min="0.15" max="0.6" step="0.01" data-k="cam_size" value="${st.cam_size}"></label>
-    <div class="ctrl" style="grid-column:1/-1"><h4>Facecam corner in the stream</h4>${seg("cam_corner",
-      [["top-left", "↖ Top left"], ["top-right", "↗ Top right"], ["bottom-left", "↙ Bottom left"], ["bottom-right", "↘ Bottom right"]], st.cam_corner)}</div>`;
+  if (st.layout === "split" || st.layout === "auto") {
+    html += `<div class="ctrl" style="grid-column:1/-1"><h4>Facecam</h4>
+      <div class="row"><button class="btn small" id="findFace">🎯 Find face</button>
+        <span class="hint" id="faceState" style="margin:0">${st.cam_box ? (st.cam_manual ? "✓ Adjusted by you · drag the face panel to move it" : "✓ Face found · drag the face panel to adjust") : "Not found yet"}</span></div></div>
+      <div class="ctrl"><h4>Facecam position</h4>${seg("cam_position", [["top", "Face on top"], ["bottom", "Face at bottom"]], st.cam_position || "top")}</div>`;
+    if (st.cam_box) html += `<label>Face zoom <input type="range" min="0.6" max="2.2" step="0.05" data-k="face_zoom" value="${st.face_zoom || 1}"></label>`;
+    else html += `<label>Facecam size <input type="range" min="0.15" max="0.6" step="0.01" data-k="cam_size" value="${st.cam_size}"></label>
+      <div class="ctrl" style="grid-column:1/-1"><h4>No face found? Pick the facecam corner</h4>${seg("cam_corner",
+        [["top-left", "↖ Top left"], ["top-right", "↗ Top right"], ["bottom-left", "↙ Bottom left"], ["bottom-right", "↘ Bottom right"]], st.cam_corner)}</div>`;
+  }
   box.innerHTML = html;
   bindInputs(box);
   bindSegs(box);
+  const ff = $("#findFace");
+  if (ff) ff.onclick = () => detectFace(true);
+}
+
+const faceCache = {};
+async function detectFace(force = false) {
+  const st = state.style, key = `${state.project.id}:${Math.round(state.trim.start)}`;
+  if (!force && st.cam_manual) return;
+  const label = $("#faceState");
+  if (label) label.textContent = "Looking for the face…";
+  let box = faceCache[key];
+  if (box === undefined || force) {
+    try { box = (await api(`/api/projects/${state.project.id}/facecam?start=${state.trim.start}&end=${state.trim.end}`)).box; }
+    catch (e) { box = null; }
+    faceCache[key] = box;
+  }
+  st.cam_box = box || null; st.cam_manual = false; st.face_zoom = 1;
+  renderLayoutOpts(); buildPreview();
+  if (!box) { const l = $("#faceState"); if (l) l.textContent = "No webcam face found in this clip"; }
+}
+
+function faceBox(st) {
+  // same maths as facecam.crop_box on the server, so zoom keeps the face centred
+  const p = state.project, ar = (p.width || 1920) / (p.height || 1080), ratio = 1080 / 720;
+  const b = st.cam_box; if (!b) return null;
+  if (st.cam_manual || !b.face) return b;
+  let h = Math.min(1, b.face * 3.0 / (st.face_zoom || 1)), w = h * ratio / ar;
+  if (w > 1) { w = 1; h = ar / ratio; }
+  const x = Math.min(Math.max(0, b.cx - w / 2), 1 - w), y = Math.min(Math.max(0, b.cy - h * 0.42), 1 - h);
+  return { ...b, x, y, w, h };
+}
+
+function effLayout() {
+  const st = state.style;
+  return st.layout === "auto" ? (st.cam_box ? "split" : "blur") : st.layout;
 }
 
 function bindInputs(root) {
@@ -643,7 +687,7 @@ function bindInputs(root) {
     const k = el.dataset.k;
     const handler = () => {
       state.style[k] = el.type === "checkbox" ? el.checked : el.type === "range" ? Number(el.value) : el.value;
-      if (["focus_x", "zoom", "cam_size"].includes(k)) layoutPreview();
+      if (["focus_x", "zoom", "cam_size", "face_zoom"].includes(k)) layoutPreview();
       drawPreview(true);
     };
     el.addEventListener("input", handler);
@@ -654,7 +698,11 @@ function bindSegs(root) {
     const k = segEl.dataset.seg, raw = b.dataset.v;
     state.style[k] = ["words_per_line", "hook_seconds"].includes(k) ? Number(raw) : raw;
     $$("button", segEl).forEach((x) => x.classList.toggle("on", x === b));
-    if (k === "layout") { renderLayoutOpts(); buildPreview(); }
+    if (k === "layout") {
+      renderLayoutOpts(); buildPreview();
+      if ((raw === "split" || raw === "auto") && !state.style.cam_box) detectFace();
+    }
+    else if (k === "cam_position") layoutPreview();
     else if (k === "cam_corner") layoutPreview();
     drawPreview(true);
   })));
@@ -699,7 +747,14 @@ function bindEditor(m) {
 
 async function renderShort(m, start, end, hook, quiet = false) {
   const style = { ...state.style };
+  if (style.cam_box && !style.cam_manual) style.cam_box = faceBox(style);
+  if (quiet && !style.cam_manual) delete style.cam_box;     // Render all: find the face in each clip
+  delete style.face_zoom; delete style.cam_manual;
   if (hook !== undefined) style.hook = hook;
+  if (!quiet || m === state.project.moments[0]) {             // remember this look for next time + Autopilot
+    api("/api/settings", { json: { default_theme: style.theme, default_layout: state.style.layout,
+      auto_theme: style.theme, auto_layout: state.style.layout } }).then((s) => (state.status.settings = s)).catch(() => {});
+  }
   if (style.uppercase === null) delete style.uppercase;
   if (!style.words_per_line) delete style.words_per_line;
   try {
@@ -731,14 +786,14 @@ function makeVideo(cls = "") {
 
 function buildPreview() {
   stopPreview();
-  const phone = $("#phone"), st = state.style;
+  const phone = $("#phone"), st = state.style, lay = effLayout();
   phone.innerHTML = "";
-  if (st.layout === "blur") {
+  if (lay === "blur") {
     const bg = makeVideo("bg"); phone.append(bg);
     const layer = document.createElement("div"); layer.className = "layer"; layer.id = "lyMain";
     const fg = makeVideo(); layer.append(fg); phone.append(layer);
     pv.videos = [fg, bg];
-  } else if (st.layout === "crop") {
+  } else if (lay === "crop") {
     const layer = document.createElement("div"); layer.className = "layer"; layer.id = "lyMain";
     const v = makeVideo(); layer.append(v); phone.append(layer);
     pv.videos = [v];
@@ -748,9 +803,11 @@ function buildPreview() {
     const v1 = makeVideo(), v2 = makeVideo();
     cam.append(v1); game.append(v2); phone.append(cam, game);
     const line = document.createElement("div"); line.className = "layer";
-    Object.assign(line.style, { left: 0, right: 0, top: "239px", height: "2px", background: "#000" });
+    line.id = "lyLine";
+    Object.assign(line.style, { left: 0, right: 0, height: "2px", background: "#000" });
     phone.append(line);
     pv.videos = [v2, v1];
+    enableFaceDrag(cam);
   }
   phone.insertAdjacentHTML("beforeend", `<div class="credit" id="pvCredit"></div><div class="hook" id="pvHook"></div>
     <div class="cap" id="pvCap"></div><div class="tag" id="pvTag"></div><div class="pbar" id="pvBar"></div>`);
@@ -768,25 +825,58 @@ function layoutPreview() {
   const place = (v, w, h, left, top) => Object.assign(v.style, { width: w + "px", height: h + "px", left: left + "px", top: top + "px" });
   const main = $("#lyMain");
   if (!main) return;
-  const vid = $("video", main);
-  if (st.layout === "blur") {
+  const vid = $("video", main), lay = effLayout();
+  if (lay === "blur") {
     const fw = 360 * st.zoom, fh = fw / ar, lw = Math.min(fw, 360);
     Object.assign(main.style, { width: lw + "px", height: fh + "px", left: (360 - lw) / 2 + "px", top: (640 - fh) / 2 - 20 + "px" });
     place(vid, fw, fh, -(fw - lw) * st.focus_x, 0);
-  } else if (st.layout === "crop") {
+  } else if (lay === "crop") {
     Object.assign(main.style, { inset: 0 });
     const h = 640, w = h * ar;
     place(vid, w, h, -(w - 360) * st.focus_x, 0);
   } else {
-    const camL = $("#lyCam"), topH = 240, botH = 400;
-    Object.assign(camL.style, { left: 0, top: 0, width: "360px", height: topH + "px" });
-    Object.assign(main.style, { left: 0, top: topH + "px", width: "360px", height: botH + "px" });
+    const camL = $("#lyCam"), topH = 240, botH = 400, faceBottom = st.cam_position === "bottom";
+    Object.assign(camL.style, { left: 0, top: (faceBottom ? botH : 0) + "px", width: "360px", height: topH + "px" });
+    Object.assign(main.style, { left: 0, top: (faceBottom ? 0 : topH) + "px", width: "360px", height: botH + "px" });
+    $("#lyLine").style.top = (faceBottom ? botH - 1 : topH - 1) + "px";
     const w = botH * ar; place(vid, w, botH, -(w - 360) * st.focus_x, 0);
-    const regionW = sw * st.cam_size, regionH = regionW * (720 / 1080), k = 360 / regionW;
-    const camX = st.cam_corner.includes("left") ? 0 : sw - regionW;
-    const camY = st.cam_corner.includes("top") ? 0 : sh - regionH;
-    place($("video", camL), sw * k, sh * k, -camX * k, -camY * k);
+    const box = faceBox(st);
+    if (box) {
+      const k = 360 / (sw * box.w), kh = 240 / (sh * box.h), s = Math.max(k, kh);
+      place($("video", camL), sw * s, sh * s, -box.x * sw * s, -box.y * sh * s);
+    } else {
+      const regionW = sw * st.cam_size, regionH = regionW * (720 / 1080), k = 360 / regionW;
+      const camX = st.cam_corner.includes("left") ? 0 : sw - regionW;
+      const camY = st.cam_corner.includes("top") ? 0 : sh - regionH;
+      place($("video", camL), sw * k, sh * k, -camX * k, -camY * k);
+    }
   }
+}
+
+function enableFaceDrag(layer) {
+  layer.style.cursor = "grab"; layer.style.pointerEvents = "auto";
+  layer.title = "Drag to move the face crop";
+  let drag = null;
+  layer.onpointerdown = (e) => {
+    const st = state.style;
+    if (!st.cam_box) return;
+    const b = faceBox(st);
+    drag = { x: e.clientX, y: e.clientY, box: { ...b } };
+    layer.setPointerCapture(e.pointerId); layer.style.cursor = "grabbing";
+  };
+  layer.onpointermove = (e) => {
+    if (!drag) return;
+    const b = drag.box, st = state.style;
+    const nx = Math.min(Math.max(0, b.x - ((e.clientX - drag.x) / 360) * b.w), 1 - b.w);
+    const ny = Math.min(Math.max(0, b.y - ((e.clientY - drag.y) / 240) * b.h), 1 - b.h);
+    st.cam_box = { x: nx, y: ny, w: b.w, h: b.h }; st.cam_manual = true;
+    layoutPreview();
+  };
+  layer.onpointerup = () => {
+    if (!drag) return;
+    drag = null; layer.style.cursor = "grab";
+    const l = $("#faceState"); if (l) l.textContent = "✓ Adjusted by you · drag the face panel to move it";
+  };
 }
 
 function chunksFor(words, start, end) {

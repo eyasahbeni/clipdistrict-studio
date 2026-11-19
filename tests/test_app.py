@@ -166,3 +166,19 @@ class TestChunkedUpload(unittest.TestCase):
         self.assertEqual(c.put(f"/api/uploads/{uid}?offset=10", data=b"c" * 5).get_json()["offset"], 15)
         self.assertEqual(c.post(f"/api/uploads/{uid}/finish", json={"name": "x.exe"}).status_code, 400)
         self.assertEqual(c.put("/api/uploads/../../etc?offset=0", data=b"x").status_code, 404)
+
+
+class TestFacecam(unittest.TestCase):
+    def test_crop_box_shape_and_bounds(self):
+        from clipdistrict.facecam import crop_box
+        b = crop_box(0.95, 0.05, 0.1, 1920, 1080)
+        self.assertGreaterEqual(b["x"], 0); self.assertLessEqual(b["x"] + b["w"], 1.0001)
+        self.assertGreaterEqual(b["y"], 0); self.assertLessEqual(b["y"] + b["h"], 1.0001)
+        self.assertAlmostEqual((b["w"] * 1920) / (b["h"] * 1080), 1.5, places=1)
+
+    def test_split_filter_uses_box_and_position(self):
+        from clipdistrict.render import video_filter
+        f = video_filter({"layout": "split", "cam_box": {"x": 0.7, "y": 0.1, "w": 0.17, "h": 0.2},
+                          "cam_position": "bottom"})
+        self.assertIn("crop=iw*0.1700:ih*0.2000:iw*0.7000:ih*0.1000", f)
+        self.assertIn("[game][cam]vstack", f)

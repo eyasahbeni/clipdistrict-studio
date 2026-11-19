@@ -42,7 +42,7 @@ DEFAULT_SETTINGS = {
     "whisper_model": os.environ.get("WHISPER_MODEL", "small"),
     "language": "",            # empty = auto-detect
     "default_theme": "vice-city",
-    "default_layout": "blur",
+    "default_layout": "auto",
     "clip_length": 0,              # 0 = auto (fits the video length)
     "clips_per_video": 0,          # 0 = auto (more clips for longer videos)
     "channel_tag": "@ClipDistrict",
@@ -58,7 +58,7 @@ DEFAULT_SETTINGS = {
     "auto_upload": "off",          # off | private | unlisted | public
     "auto_channel": "",
     "auto_theme": "vice-city",
-    "auto_layout": "blur",
+    "auto_layout": "auto",
     # cleanup
     "delete_source_after_auto": True,
     "delete_clip_after_upload": False,

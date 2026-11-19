@@ -29,7 +29,7 @@ Download your Shorts with step 4 before closing (or tick *Save to Google Drive*)
 | **Upload** | Title ideas, auto description with credit + hashtags, private / unlisted / public. Uses Google's official sign-in. |
 
 **16 caption themes:** Vice City · Hype Yellow · Wanted Level · Neon Money · Leonida Sunset · Ice Cold · Clean White · Box Pop · Breaking News · Neon Glow · Cyber Glow · Karaoke Fill · Type Reveal · One Word Punch · Hype Tilt · Minimal
-**Layouts:** full frame + blurred background · fill screen (crop) · facecam top + gameplay bottom
+**Layouts:** Auto (finds the streamer's webcam face and splits face/gameplay, otherwise blurred background) · full frame + blurred background · fill screen (crop) · facecam + gameplay (face on top or at bottom, drag to adjust). Face detection uses OpenCV's YuNet model (MIT, included).
 
 ## Autopilot (runs by itself)
 

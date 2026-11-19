@@ -10,6 +10,7 @@ from .captions import THEMES, W, H, build_ass
 from .config import FONTS_DIR, ffmpeg_bin, ffmpeg_has_captions, gpu_encoder
 
 LAYOUTS = {
+    "auto": "Auto (facecam if found)",
     "blur": "Full frame + blurred background",
     "crop": "Fill screen (crop)",
     "split": "Facecam top + gameplay bottom",
@@ -34,17 +35,26 @@ def video_filter(style: dict) -> str:
         return (f"[0:v]scale=-2:{H},crop={W}:{H}:(iw-{W})*{focus:.3f}:0,setsar=1[base]")
 
     if layout == "split":
-        corner = style.get("cam_corner", "top-right")
-        corner = corner if corner in CAM_CORNERS else "top-right"
-        size = _f(style.get("cam_size"), 0.15, 0.6, 0.3)
         top_h, bottom_h = 720, H - 720
-        cam_x = "0" if "left" in corner else f"iw-iw*{size:.3f}"
-        cam_y = "0" if "top" in corner else f"ih-iw*{size:.3f}*{top_h / W:.4f}"
-        cam = (f"[0:v]crop=iw*{size:.3f}:iw*{size:.3f}*{top_h / W:.4f}:{cam_x}:{cam_y},"
-               f"scale={W}:{top_h},setsar=1[cam]")
+        box = style.get("cam_box")
+        if isinstance(box, dict) and all(k in box for k in "xywh"):
+            bx, by = _f(box["x"], 0, 0.99, 0), _f(box["y"], 0, 0.99, 0)
+            bw, bh = _f(box["w"], 0.01, 1 - bx, 0.3), _f(box["h"], 0.01, 1 - by, 0.3)
+            cam = (f"[c]crop=iw*{bw:.4f}:ih*{bh:.4f}:iw*{bx:.4f}:ih*{by:.4f},"
+                   f"scale={W}:{top_h}:force_original_aspect_ratio=increase,crop={W}:{top_h},setsar=1[cam]")
+        else:  # manual corner fallback
+            corner = style.get("cam_corner", "top-right")
+            corner = corner if corner in CAM_CORNERS else "top-right"
+            size = _f(style.get("cam_size"), 0.15, 0.6, 0.3)
+            cam_x = "0" if "left" in corner else f"iw-iw*{size:.3f}"
+            cam_y = "0" if "top" in corner else f"ih-iw*{size:.3f}*{top_h / W:.4f}"
+            cam = (f"[c]crop=iw*{size:.3f}:iw*{size:.3f}*{top_h / W:.4f}:{cam_x}:{cam_y},"
+                   f"scale={W}:{top_h},setsar=1[cam]")
         game = (f"[g]scale=-2:{bottom_h},crop={W}:{bottom_h}:(iw-{W})*{focus:.3f}:0,setsar=1[game]")
-        return (f"[0:v]split=2[c][g];{cam.replace('[0:v]', '[c]')};{game};"
-                f"[cam][game]vstack=inputs=2,drawbox=x=0:y={top_h - 3}:w={W}:h=6:color=black@0.9:t=fill[base]")
+        order = "[game][cam]" if style.get("cam_position") == "bottom" else "[cam][game]"
+        line_y = bottom_h - 3 if style.get("cam_position") == "bottom" else top_h - 3
+        return (f"[0:v]split=2[c][g];{cam};{game};"
+                f"{order}vstack=inputs=2,drawbox=x=0:y={line_y}:w={W}:h=6:color=black@0.9:t=fill[base]")
 
     # blur (default): whole frame in the middle, blurred copy behind it
     fg_w = int(W * zoom) // 2 * 2

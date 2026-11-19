@@ -14,7 +14,7 @@ import secrets
 from flask import Flask, abort, jsonify, redirect, request, send_file, send_from_directory, session
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from . import __version__, ai, captions, importer, jobs, moments, projects, render, transcribe, uploader, workflow
+from . import __version__, ai, captions, facecam, importer, jobs, moments, projects, render, transcribe, uploader, workflow
 from .config import (INBOX_DIR, APP_PASSWORD, HOSTED, PUBLIC_URL, WORKSPACE, FONTS_DIR, SECRETS_DIR, WEB_DIR, ensure_dirs, ffmpeg_bin, ffmpeg_has_captions, load_settings,
                      oauth_client_file, save_settings)
 
@@ -496,6 +496,17 @@ def retranscribe(pid):
     projects.update(pid, error="", status="transcribing")
     jobs.submit("analyze", "Subtitles + moments again", lambda p: workflow.analyze(pid, p)["id"], project_id=pid)
     return jsonify({"ok": True})
+
+
+@app.get("/api/projects/<pid>/facecam")
+def find_facecam(pid):
+    meta = projects.load(pid)
+    if not projects.source_path(pid).is_file():
+        return _err("The source video was cleaned up")
+    start = float(request.args.get("start", 0))
+    end = float(request.args.get("end", min(meta["duration"], start + 30)))
+    box = facecam.detect(projects.source_path(pid), start, end, meta.get("width") or 1920, meta.get("height") or 1080)
+    return jsonify({"box": box})
 
 
 @app.get("/api/projects/<pid>/search")

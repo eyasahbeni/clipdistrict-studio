@@ -11,7 +11,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import ai, importer, jobs, moments, projects, render, transcribe, uploader
+from . import ai, facecam, importer, jobs, moments, projects, render, transcribe, uploader
 from .config import PROJECTS_DIR, WORKSPACE, ensure_dirs, load_settings, save_settings
 
 ACTIVITY_FILE = WORKSPACE / "activity.json"
@@ -182,6 +182,18 @@ def queue_render(pid: str, start: float, end: float, style: dict, *, moment_id: 
             _set_clip(pid, clip_id, status="error", error="Source video was cleaned up")
             raise RuntimeError("Source video was cleaned up")
         words = transcribe.words_between(transcribe.load(projects.transcript_path(pid)), start, end)
+        if style.get("layout") in ("auto", "split") and not style.get("cam_box"):
+            progress(None, "Finding the facecam…")
+            meta = projects.load(pid)
+            box = facecam.detect(projects.source_path(pid), start, end, meta.get("width") or 1920,
+                                 meta.get("height") or 1080)
+            if box:
+                style.update(layout="split", cam_box=box)
+            elif style.get("layout") == "auto":
+                style["layout"] = "blur"
+            _set_clip(pid, clip_id, style=style)
+        elif style.get("layout") == "auto":
+            style["layout"] = "split" if style.get("cam_box") else "blur"
         try:
             render.render(projects.source_path(pid), projects.clip_path(pid, clip_id), start, end, words,
                           style, on_progress=progress)
